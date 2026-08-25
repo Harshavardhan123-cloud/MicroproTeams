@@ -42,8 +42,8 @@ interface AppState {
   selectSelfChat: () => Promise<void>;
   sendMessage: (content: string) => Promise<Message | null>;
   createWorkspace: (name: string) => Promise<Workspace | null>;
-  createChannel: (name: string, description?: string) => Promise<Channel | null>;
-  createDMChat: (memberIds: string[]) => Promise<Channel | null>;
+  createChannel: (name: string, description?: string, memberIds?: string[]) => Promise<Channel | null>;
+  createDMChat: (memberIds: string[], customName?: string) => Promise<Channel | null>;
   receiveMessage: (payload: MessageBroadcast) => void;
   setPresence: (userId: string, status: PresenceStatus) => void;
   updateUserPresence: (status: PresenceStatus) => void;
@@ -182,7 +182,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  async createChannel(name, description) {
+  async createChannel(name, description, memberIds) {
     const { workspace } = get();
     if (!workspace) return null;
 
@@ -191,6 +191,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         workspace_id: workspace.id,
         name: slugify(name),
         description,
+        type: memberIds && memberIds.length > 0 ? "private" : "public",
+        member_ids: memberIds,
       });
       set((state) => ({ channels: [...state.channels, channel] }));
       await get().selectChannel(channel.id);
@@ -201,7 +203,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  async createDMChat(memberIds) {
+  async createDMChat(memberIds, customName) {
     const { workspace } = get();
     if (!workspace) return null;
 
@@ -209,6 +211,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const channel = await api.channels.createDM({
         workspace_id: workspace.id,
         member_ids: memberIds,
+        name: customName,
       });
       // Add to channel list if not already present (duplicate prevention returns existing)
       set((state) => {

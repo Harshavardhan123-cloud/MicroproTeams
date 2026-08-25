@@ -262,6 +262,16 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
             <div className="teams-section-header" onClick={() => setChannelsOpen(!channelsOpen)}>
               {channelsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               <span>Channels</span>
+              <button
+                className="add-channel-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCreateChannel();
+                }}
+                title="Create channel"
+              >
+                <Plus size={14} />
+              </button>
             </div>
 
             {channelsOpen && (

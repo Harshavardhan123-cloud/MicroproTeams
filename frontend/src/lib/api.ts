@@ -200,6 +200,7 @@ export const api = {
       name: string;
       description?: string;
       type?: string;
+      member_ids?: string[];
     }): Promise<Channel> {
       return request<Channel>("/channels/", { method: "POST", body: payload });
     },
@@ -209,6 +210,7 @@ export const api = {
     createDM(payload: {
       workspace_id: string;
       member_ids: string[];
+      name?: string;
     }): Promise<Channel> {
       return request<Channel>("/channels/dm", { method: "POST", body: payload });
     },

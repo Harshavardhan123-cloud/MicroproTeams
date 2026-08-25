@@ -24,11 +24,13 @@ class ChannelCreateRequest(BaseModel):
     description: Optional[str] = None
     type: str = ChannelType.PUBLIC.value
     topic: Optional[str] = None
+    member_ids: Optional[List[str]] = None
 
 
 class DMCreateRequest(BaseModel):
     workspace_id: str
     member_ids: List[str]  # User IDs to chat with (can include self for personal chat)
+    name: Optional[str] = None
 
 
 class ChannelResponse(BaseModel):
@@ -63,8 +65,19 @@ async def create_channel(payload: ChannelCreateRequest, current_user: CurrentUse
     # Auto-add creator as owner member
     member = ChannelMember(channel_id=channel.id, user_id=current_user.id, role="owner")
     db.add(member)
+
+    # Auto-add specified members if any
+    all_members = [current_user.id]
+    if payload.member_ids:
+        for uid in payload.member_ids:
+            if uid != current_user.id:
+                db.add(ChannelMember(channel_id=channel.id, user_id=uid, role="member"))
+                all_members.append(uid)
+
     await db.refresh(channel)
-    return ChannelResponse.model_validate(channel)
+    resp = ChannelResponse.model_validate(channel)
+    resp.member_ids = all_members
+    return resp
 
 
 @router.post("/dm", response_model=ChannelResponse, status_code=201)
@@ -122,7 +135,10 @@ async def create_dm(payload: DMCreateRequest, current_user: CurrentUser, db: Asy
     member_users = member_users_result.scalars().all()
     member_map = {u.id: u for u in member_users}
 
-    if is_self_chat:
+    if payload.name and payload.name.strip():
+        channel_name = payload.name.strip()
+        description = "Group chat" if len(all_member_ids) > 2 else "Direct message"
+    elif is_self_chat:
         channel_name = f"{member_map[current_user.id].display_name} (You)"
         description = "Personal space for drafts and notes"
     elif len(all_member_ids) == 2:
