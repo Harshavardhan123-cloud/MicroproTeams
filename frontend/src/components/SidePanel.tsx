@@ -21,21 +21,29 @@ interface Caption {
   timestamp: number;
 }
 
+export interface ChatMessage {
+  senderId: string;
+  sender: string;
+  text: string;
+  time: string;
+}
+
 export default function SidePanel({
   kind,
   participants,
   captions = [],
+  chatMessages = [],
+  onSendMessage,
   onClose,
 }: {
   kind: PanelKind;
   participants: Participant[];
   captions?: Caption[];
+  chatMessages?: ChatMessage[];
+  onSendMessage?: (text: string) => void;
   onClose: () => void;
 }) {
   const [chatInput, setChatInput] = useState("");
-  const [chatMessages, setChatMessages] = useState<{ sender: string; text: string; time: string }[]>([
-    { sender: "System", text: "Meeting chat is ready. Messages are end-to-end encrypted.", time: "now" },
-  ]);
 
   if (!kind) return null;
 
@@ -62,11 +70,8 @@ export default function SidePanel({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if (chatInput.trim()) {
-                    setChatMessages((prev) => [
-                      ...prev,
-                      { sender: "You", text: chatInput.trim(), time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
-                    ]);
+                  if (chatInput.trim() && onSendMessage) {
+                    onSendMessage(chatInput.trim());
                     setChatInput("");
                   }
                 }

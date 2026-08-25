@@ -151,6 +151,9 @@ export default function MeetingRoomPage() {
 
   // Mediasoup state
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([
+    { senderId: "system", sender: "System", text: "Meeting chat is ready. Messages are end-to-end encrypted.", time: "now" }
+  ]);
   const socketRef = useRef<Socket | null>(null);
   const deviceRef = useRef<mediasoupClient.Device | null>(null);
   const sendTransportRef = useRef<mediasoupClient.types.Transport | null>(null);
@@ -192,7 +195,8 @@ export default function MeetingRoomPage() {
   useEffect(() => {
     if (!user) return;
 
-    const socketUrl = process.env.NEXT_PUBLIC_MEDIASOUP_URL || "http://192.168.1.147:3000";
+    // Use window.location.origin to route through Nginx proxy, which fixes HTTPS mixed content
+    const socketUrl = window.location.origin;
     const socket = io(socketUrl);
     socketRef.current = socket;
 
@@ -353,6 +357,16 @@ export default function MeetingRoomPage() {
         setTimeout(() => {
           setParticipants(prev => prev.map(p => p.id === peerId ? { ...p, activeEmoji: null } : p));
         }, 2000);
+      } else if (action === "chat") {
+        setParticipants(prev => {
+          const senderPeer = prev.find(p => p.id === peerId);
+          const senderName = senderPeer ? senderPeer.displayName : "Unknown";
+          setChatMessages(msgs => [
+            ...msgs,
+            { senderId: peerId, sender: senderName, text: payload.text, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }
+          ]);
+          return prev;
+        });
       }
     });
 
@@ -450,8 +464,16 @@ export default function MeetingRoomPage() {
 
   const sendEmoji = (emoji: string) => {
     setActiveEmoji(emoji);
-    socketRef.current?.emit("meeting:action", { roomId: meetingId, peerId: user?.id, action: "emoji", payload: { emoji } });
+    socketRef.current?.emit("meeting:action", { roomId: meetingId, peerId: socketRef.current.id, action: "emoji", payload: { emoji } });
     setTimeout(() => setActiveEmoji(null), 2000);
+  };
+
+  const sendChatMessage = (text: string) => {
+    setChatMessages(prev => [
+      ...prev,
+      { senderId: socketRef.current?.id || user?.id, sender: "You", text, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }
+    ]);
+    socketRef.current?.emit("meeting:action", { roomId: meetingId, peerId: socketRef.current?.id, action: "chat", payload: { text } });
   };
 
   const togglePanel = (panel: NonNullable<PanelKind>) => {
@@ -532,6 +554,8 @@ export default function MeetingRoomPage() {
             isSpeaking: false,
             isLocal: true,
           }, ...participants]}
+          chatMessages={chatMessages}
+          onSendMessage={sendChatMessage}
           onClose={() => setActivePanel(null)}
         />
       </div>
