@@ -203,6 +203,12 @@ export const api = {
     }): Promise<Channel> {
       return request<Channel>("/channels/", { method: "POST", body: payload });
     },
+    createDM(payload: {
+      workspace_id: string;
+      target_user_id: string;
+    }): Promise<Channel> {
+      return request<Channel>("/channels/dm", { method: "POST", body: payload });
+    },
     members(channelId: string): Promise<User[]> {
       return request<User[]>(`/channels/${channelId}/members`);
     },

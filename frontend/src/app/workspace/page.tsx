@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Video, Edit3, MoreHorizontal } from "lucide-react";
+import { Search, Video, Edit3, MoreHorizontal, Phone } from "lucide-react";
 
 import AppRail from "@/components/AppRail";
 import TopHeader from "@/components/TopHeader";
@@ -72,8 +72,8 @@ export default function WorkspacePage() {
   const user = useAppStore((s) => s.user);
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
-  const createChannel = useAppStore((s) => s.createChannel);
   const createWorkspace = useAppStore((s) => s.createWorkspace);
+  const usersById = useAppStore((s) => s.usersById);
 
   // Auth guard — this route is client-rendered and token-gated
   useEffect(() => {
@@ -91,6 +91,25 @@ export default function WorkspacePage() {
   const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
   const userName = user?.display_name || user?.username || "Harshavardhan Chatte";
   const userInitials = userName.slice(0, 2).toUpperCase();
+
+  let chatTitle = activeChannel ? activeChannel.name : `${userName} (You)`;
+  let chatInitials = userInitials;
+  
+  if (activeChannel && activeChannel.type === "dm") {
+    // Extract the partner ID from 'dm-userA-userB'
+    const partnerId = activeChannel.name
+      .replace("dm-", "")
+      .replace(user?.id || "", "")
+      .replace("-", "");
+    const partner = usersById[partnerId];
+    if (partner) {
+      chatTitle = partner.display_name || partner.username;
+      chatInitials = chatTitle.slice(0, 2).toUpperCase();
+    } else {
+      chatTitle = "Direct Message";
+      chatInitials = "DM";
+    }
+  }
 
   if (!authed || !bootstrapped) {
     return (
@@ -143,7 +162,7 @@ export default function WorkspacePage() {
         {/* Content Split: Sidebar + Active Chat View */}
         <div className="teams-body-layout">
           {/* Chat Navigation Sidebar */}
-          <Sidebar onCreateChannel={() => setModal("channel")} />
+          <Sidebar />
 
           {/* Main Active Chat Area */}
           <main className="teams-chat-main">
@@ -151,11 +170,11 @@ export default function WorkspacePage() {
             <header className="teams-chat-header">
               <div className="chat-header-title-box">
                 <div className="header-avatar-box">
-                  <span>{userInitials}</span>
+                  <span>{chatInitials}</span>
                   <span className="presence-green-dot" />
                 </div>
                 <div className="header-title-text">
-                  <span className="title-main">{activeChannel ? activeChannel.name : `${userName} (You)`}</span>
+                  <span className="title-main">{chatTitle}</span>
                 </div>
               </div>
 
@@ -165,8 +184,15 @@ export default function WorkspacePage() {
                 </button>
                 <button
                   className="teams-header-btn"
+                  title="Start audio call"
+                  onClick={() => router.push(`/meeting/${activeChannel?.id || Date.now()}?audio=true`)}
+                >
+                  <Phone size={16} />
+                </button>
+                <button
+                  className="teams-header-btn"
                   title="Start video call"
-                  onClick={() => router.push(`/meeting/${Date.now()}`)}
+                  onClick={() => router.push(`/meeting/${activeChannel?.id || Date.now()}`)}
                 >
                   <Video size={16} />
                 </button>
@@ -186,17 +212,7 @@ export default function WorkspacePage() {
         </div>
       </div>
 
-      {modal === "channel" && (
-        <CreateModal
-          title="Create a chat"
-          label="Chat name"
-          placeholder="e.g. Marketing Team Sync"
-          submitLabel="Create chat"
-          description="Chats are private and user-specific spaces where your team communicates."
-          onSubmit={(name) => createChannel(name)}
-          onClose={() => setModal(null)}
-        />
-      )}
+
 
       {error && (
         <div

@@ -12,6 +12,7 @@ from core.database import get_db
 from core.dependencies import CurrentUser
 from models.workspace import Channel, ChannelMember, ChannelType
 from schemas.auth import UserPublicResponse
+from sqlalchemy import func
 
 router = APIRouter()
 
@@ -23,6 +24,11 @@ class ChannelCreateRequest(BaseModel):
     description: Optional[str] = None
     type: str = ChannelType.PRIVATE.value
     topic: Optional[str] = None
+
+
+class DMCreateRequest(BaseModel):
+    target_user_id: str
+    workspace_id: str
 
 
 class ChannelResponse(BaseModel):
@@ -56,6 +62,39 @@ async def create_channel(payload: ChannelCreateRequest, current_user: CurrentUse
     # Auto-add creator as owner member
     member = ChannelMember(channel_id=channel.id, user_id=current_user.id, role="owner")
     db.add(member)
+    await db.refresh(channel)
+    return ChannelResponse.model_validate(channel)
+
+
+@router.post("/dm", response_model=ChannelResponse, status_code=201)
+async def get_or_create_dm(payload: DMCreateRequest, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Channel)
+        .join(ChannelMember, Channel.id == ChannelMember.channel_id)
+        .where(
+            Channel.type == ChannelType.DM.value,
+            Channel.workspace_id == payload.workspace_id,
+            ChannelMember.user_id.in_([current_user.id, payload.target_user_id])
+        )
+        .group_by(Channel.id)
+        .having(func.count(ChannelMember.user_id) == 2)
+    )
+    existing = result.scalars().first()
+    if existing:
+        return ChannelResponse.model_validate(existing)
+        
+    channel = Channel(
+        workspace_id=payload.workspace_id,
+        name=f"dm-{current_user.id}-{payload.target_user_id}",
+        type=ChannelType.DM.value,
+        created_by=current_user.id
+    )
+    db.add(channel)
+    await db.flush()
+    db.add(ChannelMember(channel_id=channel.id, user_id=current_user.id, role="member"))
+    if current_user.id != payload.target_user_id:
+        db.add(ChannelMember(channel_id=channel.id, user_id=payload.target_user_id, role="member"))
+    await db.commit()
     await db.refresh(channel)
     return ChannelResponse.model_validate(channel)
 

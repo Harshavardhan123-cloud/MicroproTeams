@@ -24,6 +24,7 @@ interface AppState {
   // Channels
   channels: Channel[];
   activeChannelId: string | null;
+  users: User[];
 
   // Data caches
   messagesByChannel: Record<string, Message[]>;
@@ -43,6 +44,7 @@ interface AppState {
   sendMessage: (content: string) => Promise<Message | null>;
   createWorkspace: (name: string) => Promise<Workspace | null>;
   createChannel: (name: string, description?: string) => Promise<Channel | null>;
+  openDM: (targetUserId: string) => Promise<void>;
   receiveMessage: (payload: MessageBroadcast) => void;
   setPresence: (userId: string, status: PresenceStatus) => void;
   updateUserPresence: (status: PresenceStatus) => void;
@@ -68,6 +70,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   workspaces: [],
   channels: [],
   activeChannelId: null,
+  users: [],
   messagesByChannel: {},
   usersById: {},
   presence: {},
@@ -79,7 +82,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   async bootstrap() {
     try {
       const user = await api.auth.me();
-      set({ user, usersById: { [user.id]: user } });
+      const usersList = await api.users.search();
+      
+      set({ 
+        user, 
+        users: usersList.filter(u => u.id !== user.id),
+        usersById: Object.fromEntries(usersList.map(u => [u.id, u])) 
+      });
 
       const workspaces = await api.workspaces.list();
       set({ workspaces });
@@ -197,6 +206,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Failed to create channel" });
       return null;
+    }
+  },
+
+  async openDM(targetUserId) {
+    const { workspace } = get();
+    if (!workspace) return;
+
+    try {
+      const channel = await api.channels.createDM({
+        workspace_id: workspace.id,
+        target_user_id: targetUserId,
+      });
+      // Ensure the channel is in the list
+      const channels = get().channels;
+      if (!channels.find((c) => c.id === channel.id)) {
+        set({ channels: [...channels, channel] });
+      }
+      await get().selectChannel(channel.id);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to open chat" });
     }
   },
 

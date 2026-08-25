@@ -120,7 +120,7 @@ export default function FilesPage() {
 
   return (
     <div className="app-shell">
-      <Sidebar onCreateChannel={() => {}} />
+      <Sidebar />
 
       <main
         className="main-content"

@@ -529,7 +529,7 @@ export default function SettingsPage() {
 
   return (
     <div className="app-shell">
-      <Sidebar onCreateChannel={() => {}} />
+      <Sidebar />
 
       <main className="main-content" style={{ flexDirection: "row" }}>
         {/* ── Settings nav ── */}

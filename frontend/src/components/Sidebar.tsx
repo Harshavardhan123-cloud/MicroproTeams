@@ -4,17 +4,16 @@ import { useState } from "react";
 import { Search, Video, Edit, ChevronDown, ChevronRight, Hash, Lock, Plus, MessageSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/store/useAppStore";
-import type { Channel } from "@/lib/types";
+import { User as UserIcon } from "lucide-react";
+import type { Channel, User } from "@/lib/types";
 
-interface SidebarProps {
-  onCreateChannel: () => void;
-}
-
-export default function Sidebar({ onCreateChannel }: SidebarProps) {
+export default function Sidebar() {
   const router = useRouter();
   const channels = useAppStore((s) => s.channels);
+  const users = useAppStore((s) => s.users);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const selectChannel = useAppStore((s) => s.selectChannel);
+  const openDM = useAppStore((s) => s.openDM);
   const selectSelfChat = useAppStore((s) => s.selectSelfChat);
   const user = useAppStore((s) => s.user);
 
@@ -26,11 +25,8 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
   const userInitials = userName.slice(0, 2).toUpperCase();
   const presence = user?.presence_status || "online";
 
-  // Filter channels based on active chip
-  const filteredChannels = channels.filter((c) => {
-    if (filter === "unread") return true; // Show all or unread channels
-    if (filter === "meetings") return c.name.includes("meeting") || c.name.includes("video");
-    if (filter === "unmuted") return true;
+  // Filter users based on active chip (mocked for now, can implement real logic later)
+  const filteredUsers = users.filter((u) => {
     return true;
   });
 
@@ -46,13 +42,6 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
             onClick={() => router.push(`/meeting/${Date.now()}`)}
           >
             <Video size={16} />
-          </button>
-          <button
-            className="sidebar-action-btn"
-            title="New Chat"
-            onClick={onCreateChannel}
-          >
-            <Edit size={16} />
           </button>
         </div>
       </div>
@@ -118,36 +107,27 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
         {/* Chats & Channels Section */}
         <div className="teams-section-header" onClick={() => setChatsOpen(!chatsOpen)}>
           {chatsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <span>Chats</span>
-          <button
-            className="add-channel-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCreateChannel();
-            }}
-            title="Create chat"
-          >
-            <Plus size={14} />
-          </button>
+          <span>Direct Messages</span>
         </div>
 
         {chatsOpen && (
           <div className="teams-section-content">
-            {filteredChannels.map((channel: Channel) => {
-              const isSelected = channel.id === activeChannelId;
+            {filteredUsers.map((u: User) => {
+              // A simple heuristic to see if this user's DM is active
+              const isSelected = channels.find(c => c.id === activeChannelId)?.name.includes(u.id);
+              const initials = (u.display_name || u.username).slice(0, 2).toUpperCase();
               return (
                 <div
-                  key={channel.id}
+                  key={u.id}
                   className={`teams-chat-item ${isSelected ? "selected" : ""}`}
-                  onClick={() => selectChannel(channel.id)}
+                  onClick={() => openDM(u.id)}
                 >
                   <div className="chat-avatar-container">
-                    <div className="teams-channel-avatar">
-                      {channel.type === "private" ? <Lock size={13} /> : <MessageSquare size={14} />}
-                    </div>
+                    <div className="teams-user-avatar">{initials}</div>
+                    <span className={`presence-green-dot ${u.presence_status || "offline"}`} />
                   </div>
                   <div className="teams-chat-info">
-                    <span className="chat-title">{channel.name}</span>
+                    <span className="chat-title">{u.display_name || u.username}</span>
                   </div>
                 </div>
               );
