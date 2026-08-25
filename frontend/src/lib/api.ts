@@ -14,7 +14,7 @@ import type {
 } from "./types";
 
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+  typeof window !== "undefined" ? `${window.location.origin}/api/v1` : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1");
 
 const ACCESS_KEY = "access_token";
 const REFRESH_KEY = "refresh_token";

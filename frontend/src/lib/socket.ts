@@ -7,7 +7,7 @@
 import { io, type Socket } from "socket.io-client";
 import { tokens } from "./api";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:8001";
+const WS_URL = typeof window !== "undefined" ? window.location.origin : (process.env.NEXT_PUBLIC_WS_URL || "http://localhost:8001");
 
 let socket: Socket | null = null;
 
