@@ -45,6 +45,7 @@ interface AppState {
   createWorkspace: (name: string) => Promise<Workspace | null>;
   createChannel: (name: string, description?: string) => Promise<Channel | null>;
   openDM: (targetUserId: string) => Promise<void>;
+  clearMessages: (channelId: string) => Promise<void>;
   receiveMessage: (payload: MessageBroadcast) => void;
   setPresence: (userId: string, status: PresenceStatus) => void;
   updateUserPresence: (status: PresenceStatus) => void;
@@ -231,6 +232,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().selectChannel(channel.id);
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Failed to open chat" });
+    }
+  },
+
+  async clearMessages(channelId) {
+    try {
+      await api.messages.clear(channelId);
+      set((state) => ({
+        messagesByChannel: {
+          ...state.messagesByChannel,
+          [channelId]: [],
+        },
+      }));
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to clear chat" });
     }
   },
 

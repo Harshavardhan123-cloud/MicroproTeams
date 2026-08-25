@@ -203,3 +203,25 @@ async def get_thread(message_id: str, current_user: CurrentUser, db: AsyncSessio
         .order_by(Message.created_at)
     )
     return [MessageResponse.model_validate(m) for m in result.scalars().all()]
+
+@router.delete("/channel/{channel_id}", status_code=204)
+async def clear_channel(channel_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    # Verify membership
+    membership = await db.execute(
+        select(ChannelMember).where(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == current_user.id
+        )
+    )
+    if not membership.scalar_one_or_none():
+        raise HTTPException(403, "Not a member of this channel")
+
+    # Fetch all messages in the channel
+    result = await db.execute(select(Message).where(Message.channel_id == channel_id, Message.is_deleted == False))
+    messages = result.scalars().all()
+    
+    for msg in messages:
+        msg.is_deleted = True
+        msg.content = "[Message deleted]"
+        
+    await db.commit()

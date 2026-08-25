@@ -242,6 +242,9 @@ export const api = {
         body: { emoji },
       });
     },
+    clear(channelId: string): Promise<void> {
+      return request<void>(`/messages/channel/${channelId}`, { method: "DELETE" });
+    },
   },
 
   users: {

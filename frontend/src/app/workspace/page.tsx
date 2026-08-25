@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Video, Edit3, MoreHorizontal, Phone } from "lucide-react";
+import { Search, Video, Edit3, MoreHorizontal, Phone, ExternalLink, Trash2 } from "lucide-react";
 
 import AppRail from "@/components/AppRail";
 import TopHeader from "@/components/TopHeader";
@@ -74,6 +74,9 @@ export default function WorkspacePage() {
   const setError = useAppStore((s) => s.setError);
   const createWorkspace = useAppStore((s) => s.createWorkspace);
   const usersById = useAppStore((s) => s.usersById);
+  const clearMessages = useAppStore((s) => s.clearMessages);
+
+  const isPopout = typeof window !== "undefined" && window.location.search.includes("popout=true");
 
   // Auth guard — this route is client-rendered and token-gated
   useEffect(() => {
@@ -152,17 +155,17 @@ export default function WorkspacePage() {
   return (
     <div className="teams-app-shell">
       {/* Leftmost Vertical Icon Rail */}
-      <AppRail activeTab="chat" />
+      {!isPopout && <AppRail activeTab="chat" />}
 
       {/* Main Workspace Layout */}
       <div className="teams-main-wrapper">
         {/* Top Header Bar with Search & Profile Dropdown */}
-        <TopHeader />
+        {!isPopout && <TopHeader />}
 
         {/* Content Split: Sidebar + Active Chat View */}
         <div className="teams-body-layout">
           {/* Chat Navigation Sidebar */}
-          <Sidebar />
+          {!isPopout && <Sidebar />}
 
           {/* Main Active Chat Area */}
           <main className="teams-chat-main">
@@ -196,8 +199,23 @@ export default function WorkspacePage() {
                 >
                   <Video size={16} />
                 </button>
-                <button className="teams-header-btn" title="Pop out chat">
-                  <Edit3 size={16} />
+                <button
+                  className="teams-header-btn"
+                  title="Pop out chat"
+                  onClick={() => window.open(`/workspace?popout=true`, "_blank", "width=800,height=600")}
+                >
+                  <ExternalLink size={16} />
+                </button>
+                <button
+                  className="teams-header-btn"
+                  title="Clear chat"
+                  onClick={() => {
+                    if (activeChannel?.id && confirm("Are you sure you want to clear this chat for everyone?")) {
+                      clearMessages(activeChannel.id);
+                    }
+                  }}
+                >
+                  <Trash2 size={16} />
                 </button>
               </div>
             </header>
