@@ -13,6 +13,9 @@ from core.config import settings
 from core.security import decode_token
 from core.database import AsyncSessionLocal
 from models.workspace import ChannelMember
+import models.message
+import models.user
+import models.meeting
 
 # Async Socket.io server with Redis pub/sub for horizontal scaling
 sio = socketio.AsyncServer(

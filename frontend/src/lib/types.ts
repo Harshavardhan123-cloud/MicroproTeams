@@ -69,15 +69,7 @@ export interface LoginResponse {
 }
 
 /** Payload broadcast over Socket.io for `message:new`. */
-export interface MessageBroadcast {
-  channel_id: string;
-  message_id: string;
-  content: string;
-  author_id: string;
-  created_at: string;
-  thread_id?: string | null;
-  is_encrypted?: boolean;
-}
+export type MessageBroadcast = Message;
 
 export interface TypingUpdate {
   channel_id: string;

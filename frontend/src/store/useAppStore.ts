@@ -235,31 +235,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   receiveMessage(payload) {
-    const { channel_id, message_id } = payload;
+    const channel_id = payload.channel_id;
     set((state) => {
       const existing = state.messagesByChannel[channel_id] ?? [];
       // The sender already appended optimistically from the POST response
-      if (existing.some((m) => m.id === message_id)) return state;
+      if (existing.some((m) => m.id === payload.id)) return state;
 
-      const message: Message = {
-        id: message_id,
-        channel_id,
-        author_id: payload.author_id,
-        content: payload.content,
-        content_encrypted: null,
-        is_encrypted: payload.is_encrypted ?? false,
-        thread_id: payload.thread_id ?? null,
-        reply_count: 0,
-        is_edited: false,
-        is_deleted: false,
-        is_pinned: false,
-        created_at: payload.created_at,
-        edited_at: null,
-      };
       return {
         messagesByChannel: {
           ...state.messagesByChannel,
-          [channel_id]: [...existing, message],
+          [channel_id]: [...existing, payload],
         },
       };
     });
