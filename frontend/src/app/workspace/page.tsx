@@ -96,13 +96,20 @@ export default function WorkspacePage() {
   const userName = user?.display_name || user?.username || "User";
   const userInitials = userName.slice(0, 2).toUpperCase();
 
-  // Compute display name and avatar for the active channel header
+  // Compute display name, avatar, and subtitle for the active channel header
   const isDMChannel = activeChannel && (activeChannel.type === "dm" || activeChannel.type === "group_dm");
   const isGroupDM = activeChannel?.type === "group_dm";
-  const isSelfChat = isDMChannel && activeChannel.member_ids?.length === 1 && activeChannel.member_ids[0] === user?.id;
+  const isSelfChat =
+    (activeChannel &&
+      (activeChannel.name === "personal-space" ||
+        (activeChannel.type === "dm" &&
+          activeChannel.member_ids?.length === 1 &&
+          activeChannel.member_ids[0] === user?.id))) ||
+    !activeChannel;
 
   let headerTitle = `${userName} (You)`;
   let headerInitials = userInitials;
+  let headerSubtitle = "Personal space (Message yourself)";
 
   if (activeChannel) {
     if (isDMChannel && activeChannel.member_ids && user) {
@@ -110,17 +117,22 @@ export default function WorkspacePage() {
       if (isSelfChat) {
         headerTitle = `${userName} (You)`;
         headerInitials = userInitials;
+        headerSubtitle = "Personal space (Message yourself)";
       } else if (otherIds.length === 1) {
         const other = usersById[otherIds[0]];
         headerTitle = other?.display_name || activeChannel.name;
         headerInitials = (other?.display_name || "??").slice(0, 2).toUpperCase();
+        const presence = other?.presence_status || "online";
+        headerSubtitle = presence === "online" ? "online" : other?.email || "offline";
       } else {
         const names = otherIds.map((id) => usersById[id]?.display_name).filter(Boolean);
         headerTitle = names.length > 0 ? names.join(", ") : activeChannel.name;
         headerInitials = `${activeChannel.member_ids.length}`;
+        headerSubtitle = `${activeChannel.member_ids.length} members`;
       }
     } else {
       headerTitle = activeChannel.name;
+      headerSubtitle = `${activeChannel.type} channel`;
     }
   }
 
@@ -174,56 +186,70 @@ export default function WorkspacePage() {
 
         {/* Content Split: Sidebar + Active Chat View */}
         <div className="teams-body-layout">
-          {/* Chat & Channels Navigation Sidebar */}
-          <Sidebar onCreateChannel={() => setModal("channel")} />
+          {/* Chat & Contacts Navigation Sidebar */}
+          <Sidebar />
 
           {/* Main Active Chat Area */}
-          <main className="teams-chat-main">
+          <main className="teams-chat-main" style={{ backgroundColor: "#0b141a" }}>
             {/* Header of Active Chat */}
-            <header className="teams-chat-header">
-              <div className="chat-header-title-box">
+            <header
+              className="teams-chat-header"
+              style={{
+                height: 60,
+                backgroundColor: "#202c33",
+                borderBottom: "1px solid #222e35",
+                padding: "10px 20px",
+              }}
+            >
+              <div className="chat-header-title-box" style={{ gap: 12 }}>
                 <div
                   className="header-avatar-box"
                   style={{
-                    background: isGroupDM
-                      ? "linear-gradient(135deg, hsl(170 70% 45%), hsl(220 70% 55%))"
-                      : isDMChannel && !isSelfChat
-                        ? "linear-gradient(135deg, hsl(280 60% 55%), hsl(200 80% 55%))"
-                        : undefined,
+                    width: 38,
+                    height: 38,
+                    borderRadius: "50%",
+                    background: isSelfChat
+                      ? "linear-gradient(135deg, #25d366, #128c7e)"
+                      : isGroupDM
+                        ? "linear-gradient(135deg, #00a884, #008069)"
+                        : "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 14,
+                    fontWeight: 700,
                   }}
                 >
-                  {isGroupDM ? <Users size={16} /> : <span>{headerInitials}</span>}
-                  {!isGroupDM && <span className="presence-green-dot" />}
+                  {isGroupDM ? <Users size={18} /> : <span>{headerInitials}</span>}
+                  {!isGroupDM && !isSelfChat && <span className="presence-green-dot" />}
                 </div>
                 <div className="header-title-text">
-                  <span className="title-main">{headerTitle}</span>
-                  {isGroupDM && activeChannel?.member_ids && (
-                    <span style={{ fontSize: 11, color: "hsl(var(--text-muted))", marginLeft: 8 }}>
-                      {activeChannel.member_ids.length} members
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="title-main" style={{ fontSize: 15, fontWeight: 600, color: "#e9edef" }}>
+                      {headerTitle}
                     </span>
-                  )}
+                  </div>
+                  <span style={{ fontSize: 11.5, color: headerSubtitle === "online" ? "#00a884" : "#8696a0" }}>
+                    {headerSubtitle}
+                  </span>
                 </div>
               </div>
 
-              <div className="chat-header-actions">
-                <button className="teams-header-btn" title="Search in chat">
-                  <Search size={16} />
-                </button>
+              <div className="chat-header-actions" style={{ gap: 8 }}>
                 <button
                   className="teams-header-btn"
                   title="Start video call"
                   onClick={() => router.push(`/meeting/${Date.now()}`)}
+                  style={{ color: "#aebac1" }}
                 >
-                  <Video size={16} />
-                </button>
-                <button className="teams-header-btn" title="Pop out chat">
-                  <Edit3 size={16} />
+                  <Video size={18} />
                 </button>
               </div>
             </header>
 
             {/* Chat Body & Input */}
-            <div className="teams-chat-body">
+            <div className="teams-chat-body" style={{ backgroundColor: "#0b141a" }}>
               <MessageList />
               <TypingIndicator />
               <Composer />

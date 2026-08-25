@@ -1412,3 +1412,25 @@ body {
 .new-chat-user-row:hover {
   background-color: rgba(255, 255, 255, 0.06) !important;
 }
+
+/* ── WhatsApp Style Chat Interface ────────────────────────────────── */
+.whatsapp-chat-row:hover {
+  background-color: #202c33 !important;
+}
+
+.whatsapp-message-row:hover .message-actions {
+  opacity: 1;
+}
+
+.teams-composer-tools button:hover {
+  color: #00a884;
+}
+
+.teams-send-btn {
+  background-color: #00a884 !important;
+}
+
+.teams-send-btn:hover {
+  background-color: #02906f !important;
+}
+

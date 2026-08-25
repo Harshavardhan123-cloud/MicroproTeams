@@ -21,8 +21,9 @@ interface AppState {
   workspace: Workspace | null;
   workspaces: Workspace[];
 
-  // Channels
+  // Channels & Users
   channels: Channel[];
+  workspaceUsers: User[];
   activeChannelId: string | null;
 
   // Data caches
@@ -38,8 +39,10 @@ interface AppState {
 
   // Actions
   bootstrap: () => Promise<void>;
+  loadWorkspaceUsers: () => Promise<void>;
   selectChannel: (channelId: string) => Promise<void>;
   selectSelfChat: () => Promise<void>;
+  startChatWithUser: (targetUser: User) => Promise<void>;
   sendMessage: (content: string) => Promise<Message | null>;
   createWorkspace: (name: string) => Promise<Workspace | null>;
   createChannel: (name: string, description?: string, memberIds?: string[]) => Promise<Channel | null>;
@@ -68,6 +71,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   workspace: null,
   workspaces: [],
   channels: [],
+  workspaceUsers: [],
   activeChannelId: null,
   messagesByChannel: {},
   usersById: {},
@@ -89,8 +93,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ workspace });
 
       if (workspace) {
-        const channels = await api.channels.list(workspace.id);
-        set({ channels });
+        const [channels, users] = await Promise.all([
+          api.channels.list(workspace.id),
+          api.users.search(""),
+        ]);
+
+        const usersMap: Record<string, User> = { [user.id]: user };
+        users.forEach((u) => {
+          usersMap[u.id] = u;
+        });
+
+        set({
+          channels,
+          workspaceUsers: users,
+          usersById: usersMap,
+        });
 
         // Restore the last-viewed channel when it still exists
         const remembered =
@@ -108,6 +125,21 @@ export const useAppStore = create<AppState>((set, get) => ({
         bootstrapped: true,
         error: err instanceof Error ? err.message : "Failed to load workspace",
       });
+    }
+  },
+
+  async loadWorkspaceUsers() {
+    try {
+      const users = await api.users.search("");
+      set((state) => ({
+        workspaceUsers: users,
+        usersById: {
+          ...state.usersById,
+          ...Object.fromEntries(users.map((u) => [u.id, u])),
+        },
+      }));
+    } catch {
+      // Ignore user search errors
     }
   },
 
@@ -294,6 +326,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  async startChatWithUser(targetUser) {
+    const { user, workspace, channels, createDMChat, selectSelfChat, selectChannel } = get();
+    if (!workspace || !user) return;
+
+    // If clicked on self
+    if (targetUser.id === user.id) {
+      await selectSelfChat();
+      return;
+    }
+
+    // Check if a 1:1 DM channel with this user already exists in state
+    const existingDM = channels.find((c) => {
+      if ((c.type === "dm" || c.type === "group_dm") && c.member_ids) {
+        return (
+          c.member_ids.length === 2 &&
+          c.member_ids.includes(user.id) &&
+          c.member_ids.includes(targetUser.id)
+        );
+      }
+      return false;
+    });
+
+    if (existingDM) {
+      await selectChannel(existingDM.id);
+      return;
+    }
+
+    // Otherwise create or retrieve on backend
+    const channel = await createDMChat([targetUser.id]);
+    if (channel) {
+      await selectChannel(channel.id);
+    }
+  },
+
   setTyping(channelId, userId, isTyping) {
     set((state) => {
       const current = state.typingByChannel[channelId] ?? [];
@@ -320,6 +386,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       workspace: null,
       workspaces: [],
       channels: [],
+      workspaceUsers: [],
       activeChannelId: null,
       messagesByChannel: {},
       usersById: {},

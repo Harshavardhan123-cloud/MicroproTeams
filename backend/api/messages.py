@@ -11,7 +11,7 @@ from datetime import datetime
 from core.database import get_db
 from core.dependencies import CurrentUser
 from models.message import Message, MessageReaction
-from models.workspace import ChannelMember
+from models.workspace import Channel, ChannelMember, ChannelType
 
 router = APIRouter()
 
@@ -68,6 +68,20 @@ async def get_messages(
     db: AsyncSession = Depends(get_db)
 ):
     """Paginated message history (cursor-based, newest first)."""
+    # Strict privacy check: non-members cannot read private/DM messages
+    channel = await db.get(Channel, channel_id)
+    if not channel:
+        raise HTTPException(404, "Channel not found")
+    if channel.type != ChannelType.PUBLIC.value:
+        membership = await db.execute(
+            select(ChannelMember).where(
+                ChannelMember.channel_id == channel_id,
+                ChannelMember.user_id == current_user.id
+            )
+        )
+        if not membership.scalar_one_or_none():
+            raise HTTPException(403, "Access denied: Not a member of this chat")
+
     query = (
         select(Message)
         .where(Message.channel_id == channel_id, Message.is_deleted.is_(False), Message.thread_id.is_(None))
