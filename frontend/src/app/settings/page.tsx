@@ -8,8 +8,9 @@
 import { useState } from "react";
 import {
   User, Bell, Palette, Shield, Globe, Database,
-  LogOut, Moon, Volume2, VolumeX, Check, ChevronRight, Key, Trash2, Download,
+  LogOut, Moon, Volume2, VolumeX, Check, ChevronRight, Key, Trash2, Download, ArrowLeft
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 
 // ── Types & Constants ──────────────────────────────────────────────────────
@@ -523,6 +524,7 @@ const SECTION_COMPONENTS: Record<SettingsSection, React.ReactNode> = {
 };
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [activeSection, setActiveSection] = useState<SettingsSection>("profile");
 
   const groups = Array.from(new Set(NAV_ITEMS.map((i) => i.group)));
@@ -543,7 +545,16 @@ export default function SettingsPage() {
             background: "hsl(var(--surface-1))",
           }}
         >
-          <div style={{ padding: "4px 16px 12px", fontWeight: 700, fontSize: 15 }}>Settings</div>
+          <div style={{ padding: "4px 16px 12px", fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+            <button 
+              className="action-btn" 
+              onClick={() => router.push("/workspace")}
+              title="Back to Workspace"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            Settings
+          </div>
           {groups.map((group) => (
             <div key={group} style={{ marginBottom: 16 }}>
               <div className="sidebar-label" style={{ justifyContent: "flex-start" }}>{group}</div>

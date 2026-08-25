@@ -4,11 +4,11 @@ import { MessageSquare, Video, Users, FolderOpen, Bell, Settings } from "lucide-
 import { useRouter, usePathname } from "next/navigation";
 
 const navItems = [
-  { id: "chat",     label: "Chat",     icon: MessageSquare, path: "/workspace" },
+  { id: "activity", label: "Activity", icon: Bell,          badge: "3", path: "/workspace?tab=activity" },
+  { id: "chat",     label: "Chat",     icon: MessageSquare, path: "/workspace?tab=chat" },
   { id: "meetings", label: "Calls",    icon: Video,         path: "/meeting/lobby" },
-  { id: "teams",    label: "Teams",    icon: Users,         path: "/workspace" },
+  { id: "teams",    label: "Teams",    icon: Users,         path: "/workspace?tab=teams" },
   { id: "files",    label: "Files",    icon: FolderOpen,    path: "/files" },
-  { id: "activity", label: "Activity", icon: Bell,          badge: "3", path: "/workspace" },
   { id: "settings", label: "Settings", icon: Settings,      path: "/settings" },
 ];
 
@@ -18,7 +18,11 @@ export default function AppRail({ activeTab }: { activeTab?: string }) {
 
   const resolveActive = (item: typeof navItems[0]) => {
     if (activeTab) return activeTab === item.id;
-    if (item.path === "/workspace") return pathname === "/workspace";
+    if (item.path.startsWith("/workspace")) {
+      const searchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+      const tab = searchParams.get("tab") || "chat";
+      return tab === item.id;
+    }
     if (item.path === "/files") return pathname.startsWith("/files");
     if (item.path === "/settings") return pathname.startsWith("/settings");
     return false;

@@ -230,6 +230,11 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("meeting:action", ({ roomId, peerId, action, payload }) => {
+    // Broadcast hand raises, emojis, etc. to everyone else in the room
+    socket.to(roomId).emit("meeting:action", { peerId, action, payload });
+  });
+
   socket.on("disconnect", () => {
     if (currentRoom && currentPeerId) {
       currentRoom.removePeer(currentPeerId);

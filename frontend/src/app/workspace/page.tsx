@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Video, Edit3, MoreHorizontal, Phone, ExternalLink, Trash2 } from "lucide-react";
 
 import AppRail from "@/components/AppRail";
 import TopHeader from "@/components/TopHeader";
 import Sidebar from "@/components/Sidebar";
+import ActivityPanel from "@/components/ActivityPanel";
+import TeamsPanel from "@/components/TeamsPanel";
 import MessageList from "@/components/MessageList";
 import Composer from "@/components/Composer";
 import TypingIndicator from "@/components/TypingIndicator";
@@ -62,7 +64,18 @@ function CenteredNotice({
 }
 
 export default function WorkspacePage() {
+  return (
+    <Suspense fallback={<div style={{ display: "flex", height: "100dvh", alignItems: "center", justifyContent: "center", background: "#1f1f1f", color: "white" }}>Loading...</div>}>
+      <WorkspaceContent />
+    </Suspense>
+  );
+}
+
+function WorkspaceContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = searchParams?.get("tab") || "chat";
+  
   const authed = Boolean(tokens.access);
   const [modal, setModal] = useState<ModalKind>(null);
 
@@ -182,7 +195,7 @@ export default function WorkspacePage() {
   return (
     <div className="teams-app-shell">
       {/* Leftmost Vertical Icon Rail */}
-      {!isPopout && <AppRail activeTab="chat" />}
+      {!isPopout && <AppRail activeTab={activeTab} />}
       
       {/* Global Modals */}
       <IncomingCallModal />
@@ -195,7 +208,9 @@ export default function WorkspacePage() {
         {/* Content Split: Sidebar + Active Chat View */}
         <div className="teams-body-layout">
           {/* Chat Navigation Sidebar */}
-          {!isPopout && <Sidebar />}
+          {!isPopout && activeTab === "chat" && <Sidebar />}
+          {!isPopout && activeTab === "activity" && <ActivityPanel />}
+          {!isPopout && activeTab === "teams" && <TeamsPanel />}
 
           {/* Main Active Chat Area */}
           <main className="teams-chat-main">

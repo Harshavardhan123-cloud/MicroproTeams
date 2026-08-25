@@ -10,6 +10,7 @@ import {
 import { useAppStore } from "@/store/useAppStore";
 import { io, Socket } from "socket.io-client";
 import * as mediasoupClient from "mediasoup-client";
+import SidePanel from "@/components/SidePanel";
 
 interface Participant {
   id: string;
@@ -19,6 +20,8 @@ interface Participant {
   isSpeaking: boolean;
   stream?: MediaStream;
   isLocal?: boolean;
+  isHandRaised?: boolean;
+  activeEmoji?: string | null;
 }
 
 interface Caption {
@@ -65,6 +68,16 @@ function VideoTile({ participant }: { participant: Participant }) {
       {participant.isSpeaking && (
         <div style={{ position: "absolute", top: 8, right: 8, width: 10, height: 10, borderRadius: "50%", background: "hsl(var(--color-success))", animation: "pulse-glow 1.5s ease-in-out infinite" }} />
       )}
+      {participant.isHandRaised && (
+        <div style={{ position: "absolute", top: 8, left: 8, fontSize: 24, background: "rgba(0,0,0,0.5)", borderRadius: "50%", padding: 4 }}>
+          ✋
+        </div>
+      )}
+      {participant.activeEmoji && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", fontSize: 64, animation: "float-up-fade 2s ease-out forwards" }}>
+          {participant.activeEmoji}
+        </div>
+      )}
     </div>
   );
 }
@@ -94,6 +107,8 @@ export default function MeetingRoomPage() {
   const [isVideoOff, setIsVideoOff] = useState(!initialVideo);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelKind>(null);
+  const [isHandRaised, setIsHandRaised] = useState(false);
+  const [activeEmoji, setActiveEmoji] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -146,6 +161,17 @@ export default function MeetingRoomPage() {
   useEffect(() => {
     (async () => {
       try {
+        if (!navigator.mediaDevices) {
+          console.warn("navigator.mediaDevices is undefined. HTTPS is required for camera/mic access.");
+          return;
+        }
+
+        // getUserMedia throws if both audio and video are false
+        if (isVideoOff && isMuted) {
+          localStreamRef.current = new MediaStream();
+          return;
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({ video: !isVideoOff, audio: !isMuted });
         localStreamRef.current = stream;
         if (localVideoRef.current) {
@@ -153,6 +179,7 @@ export default function MeetingRoomPage() {
         }
       } catch (err) {
         console.warn("Local media not accessible", err);
+        localStreamRef.current = new MediaStream();
       }
     })();
     return () => {
@@ -310,50 +337,84 @@ export default function MeetingRoomPage() {
       });
     });
 
+    socket.on("meeting:action", ({ peerId, action, payload }) => {
+      if (action === "hand-raise") {
+        setParticipants(prev => prev.map(p => p.id === peerId ? { ...p, isHandRaised: payload.isRaised } : p));
+      } else if (action === "emoji") {
+        setParticipants(prev => prev.map(p => p.id === peerId ? { ...p, activeEmoji: payload.emoji } : p));
+        setTimeout(() => {
+          setParticipants(prev => prev.map(p => p.id === peerId ? { ...p, activeEmoji: null } : p));
+        }, 2000);
+      }
+    });
+
     return () => {
       socket.disconnect();
     };
   }, [meetingId, user]);
 
   const toggleMic = async () => {
+    if (!navigator.mediaDevices) {
+      alert("Microphone access requires a secure HTTPS connection or localhost.");
+      return;
+    }
+
     setIsMuted(!isMuted);
     
     // Manage local stream tracks
-    if (localStreamRef.current) {
-      const track = localStreamRef.current.getAudioTracks()[0];
-      if (track) {
-        track.enabled = isMuted; // Toggle if exists
-      } else if (isMuted && sendTransportRef.current) { // Muted -> Unmuted, but no track
-         try {
-           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-           const newTrack = stream.getAudioTracks()[0];
-           localStreamRef.current.addTrack(newTrack);
-           await sendTransportRef.current.produce({ track: newTrack, appData: { type: "audio" }});
-         } catch(e) {}
-      }
+    if (!localStreamRef.current) {
+      localStreamRef.current = new MediaStream();
+    }
+    
+    const track = localStreamRef.current.getAudioTracks()[0];
+    if (track) {
+      track.enabled = isMuted; // Toggle if exists
+    } else if (isMuted && sendTransportRef.current) { // Muted -> Unmuted, but no track
+       try {
+         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+         const newTrack = stream.getAudioTracks()[0];
+         localStreamRef.current.addTrack(newTrack);
+         await sendTransportRef.current.produce({ track: newTrack, appData: { type: "audio" }});
+       } catch(e) {
+         console.warn("Failed to get audio", e);
+       }
     }
   };
 
   const toggleVideo = async () => {
+    if (!navigator.mediaDevices) {
+      alert("Camera access requires a secure HTTPS connection or localhost.");
+      return;
+    }
+
     setIsVideoOff(!isVideoOff);
 
-    if (localStreamRef.current) {
-      const track = localStreamRef.current.getVideoTracks()[0];
-      if (track) {
-        track.enabled = isVideoOff; // Toggle if exists
-      } else if (isVideoOff && sendTransportRef.current) {
-         try {
-           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-           const newTrack = stream.getVideoTracks()[0];
-           localStreamRef.current.addTrack(newTrack);
-           if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
-           await sendTransportRef.current.produce({ track: newTrack, appData: { type: "video" }});
-         } catch(e) {}
-      }
+    if (!localStreamRef.current) {
+      localStreamRef.current = new MediaStream();
+    }
+
+    const track = localStreamRef.current.getVideoTracks()[0];
+    if (track) {
+      track.enabled = isVideoOff; // Toggle if exists
+    } else if (isVideoOff && sendTransportRef.current) {
+       try {
+         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+         const newTrack = stream.getVideoTracks()[0];
+         localStreamRef.current.addTrack(newTrack);
+         if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+         await sendTransportRef.current.produce({ track: newTrack, appData: { type: "video" }});
+       } catch(e) {
+         console.warn("Failed to get video", e);
+       }
     }
   };
 
   const toggleScreen = async () => {
+    if (!navigator.mediaDevices) {
+      alert("Screen sharing requires a secure HTTPS connection or localhost.");
+      return;
+    }
+
     if (!isScreenSharing && sendTransportRef.current) {
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
@@ -372,6 +433,21 @@ export default function MeetingRoomPage() {
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       setIsScreenSharing(false);
     }
+  };
+
+  const toggleHandRaise = () => {
+    setIsHandRaised(!isHandRaised);
+    socketRef.current?.emit("meeting:action", { roomId: meetingId, peerId: user?.id, action: "hand-raise", payload: { isRaised: !isHandRaised } });
+  };
+
+  const sendEmoji = (emoji: string) => {
+    setActiveEmoji(emoji);
+    socketRef.current?.emit("meeting:action", { roomId: meetingId, peerId: user?.id, action: "emoji", payload: { emoji } });
+    setTimeout(() => setActiveEmoji(null), 2000);
+  };
+
+  const togglePanel = (panel: NonNullable<PanelKind>) => {
+    setActivePanel((prev) => (prev === panel ? null : panel));
   };
 
   const endCall = () => {
@@ -418,6 +494,16 @@ export default function MeetingRoomPage() {
                 </div>
               )}
               <div className="video-tile-name">You {isMuted && "🔇"}</div>
+              {isHandRaised && (
+                <div style={{ position: "absolute", top: 8, left: 8, fontSize: 24, background: "rgba(0,0,0,0.5)", borderRadius: "50%", padding: 4 }}>
+                  ✋
+                </div>
+              )}
+              {activeEmoji && (
+                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", fontSize: 64, animation: "float-up-fade 2s ease-out forwards" }}>
+                  {activeEmoji}
+                </div>
+              )}
             </div>
             
             {/* Remote participants */}
@@ -426,6 +512,20 @@ export default function MeetingRoomPage() {
             ))}
           </div>
         </div>
+
+        {/* ── Side panel ── */}
+        <SidePanel
+          kind={activePanel}
+          participants={[{
+            id: "local",
+            displayName: user?.display_name || user?.username || "You",
+            isMuted: isMuted,
+            isVideoOff: isVideoOff,
+            isSpeaking: false,
+            isLocal: true,
+          }, ...participants]}
+          onClose={() => setActivePanel(null)}
+        />
       </div>
 
       {/* ── Controls bar ── */}
@@ -433,7 +533,11 @@ export default function MeetingRoomPage() {
         <ControlBtn icon={isMuted ? <MicOff size={20} /> : <Mic size={20} />} label={isMuted ? "Unmute" : "Mute"} active={!isMuted} onClick={toggleMic} />
         <ControlBtn icon={isVideoOff ? <VideoOff size={20} /> : <Video size={20} />} label={isVideoOff ? "Start Video" : "Stop Video"} active={!isVideoOff} onClick={toggleVideo} />
         <ControlBtn icon={<MonitorUp size={20} />} label="Share Screen" active={isScreenSharing} onClick={toggleScreen} />
+        <ControlBtn icon={<Hand size={20} />} label="Raise Hand" active={isHandRaised} onClick={toggleHandRaise} />
+        <ControlBtn icon={<Smile size={20} />} label="React" onClick={() => sendEmoji("👏")} />
         <div style={{ width: 1, height: 40, background: "hsl(var(--border-medium))", margin: "0 4px" }} />
+        <ControlBtn icon={<MessageSquare size={20} />} label="Chat" active={activePanel === "chat"} onClick={() => togglePanel("chat")} />
+        <ControlBtn icon={<Users size={20} />} label="People" active={activePanel === "participants"} onClick={() => togglePanel("participants")} />
         <ControlBtn icon={<Phone size={20} />} label="End Call" danger onClick={endCall} />
       </div>
     </div>
