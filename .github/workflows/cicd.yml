@@ -11,6 +11,17 @@ on:
       - Harshavardhan_Code
       - Testing
       - main
+  workflow_dispatch:
+    inputs:
+      promote_target:
+        description: 'Select environment to promote to (run tests only if None)'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - 'none'
+          - 'Testing'
+          - 'main'
 
 permissions:
   contents: write
@@ -105,7 +116,7 @@ jobs:
   promote-to-testing:
     name: Promote Harshavardhan_Code -> Testing
     needs: [backend-ci, frontend-ci, docker-ci]
-    if: github.ref_name == 'Harshavardhan_Code' && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.promote_target == 'Testing' && github.ref_name == 'Harshavardhan_Code'
     runs-on: ubuntu-latest
 
     steps:
@@ -129,7 +140,7 @@ jobs:
   promote-to-main:
     name: Promote Testing -> main (Production)
     needs: [backend-ci, frontend-ci, docker-ci]
-    if: github.ref_name == 'Testing' && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.promote_target == 'main' && github.ref_name == 'Testing'
     runs-on: ubuntu-latest
 
     steps:
