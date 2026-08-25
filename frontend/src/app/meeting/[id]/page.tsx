@@ -14,6 +14,7 @@ import {
   Bot, Copy, MoreHorizontal, ChevronDown, Maximize2
 } from "lucide-react";
 import { tokens } from "@/lib/api";
+import { useAppStore } from "@/store/useAppStore";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -354,31 +355,62 @@ export default function MeetingRoomPage() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  // Demo participants (would come from mediasoup signaling in production)
-  const [participants] = useState<Participant[]>([
-    {
+  const channels = useAppStore((s) => s.channels);
+  const usersById = useAppStore((s) => s.usersById);
+  const user = useAppStore((s) => s.user);
+
+  const channel = channels.find((c) => c.id === meetingId);
+
+  let meetingTitle = channel ? channel.name : "Meeting Call";
+  let dmPartnerName = "";
+
+  if (channel && channel.type === "dm") {
+    const nameWithoutDm = channel.name.replace("dm-", "");
+    const uuid1 = nameWithoutDm.substring(0, 36);
+    const uuid2 = nameWithoutDm.substring(37, 73);
+    const partnerId = uuid1 === user?.id ? uuid2 : uuid1;
+    const partner = usersById[partnerId];
+    if (partner) {
+      dmPartnerName = partner.display_name || partner.username;
+      meetingTitle = `${dmPartnerName} (Call)`;
+    } else {
+      meetingTitle = "Direct Message Call";
+    }
+  } else if (channel) {
+    meetingTitle = `${channel.name} Call`;
+  }
+
+  const [participants, setParticipants] = useState<Participant[]>([]);
+
+  useEffect(() => {
+    const localPart = {
       id: "local",
       displayName: "You",
       isMuted: isMuted,
       isVideoOff: isVideoOff,
       isSpeaking: false,
       isLocal: true,
-    },
-    {
-      id: "peer-1",
-      displayName: "Sarah Chen",
-      isMuted: false,
-      isVideoOff: false,
-      isSpeaking: true,
-    },
-    {
-      id: "peer-2",
-      displayName: "James Okafor",
-      isMuted: true,
-      isVideoOff: false,
-      isSpeaking: false,
-    },
-  ]);
+    };
+
+    if (channel && channel.type === "dm" && dmPartnerName) {
+      setParticipants([
+        localPart,
+        {
+          id: "partner",
+          displayName: dmPartnerName,
+          isMuted: false,
+          isVideoOff: false,
+          isSpeaking: true,
+        },
+      ]);
+    } else {
+      setParticipants([
+        localPart,
+        { id: "peer-1", displayName: "Sarah Chen", isMuted: false, isVideoOff: false, isSpeaking: true },
+        { id: "peer-2", displayName: "James Okafor", isMuted: true, isVideoOff: false, isSpeaking: false },
+      ]);
+    }
+  }, [channel, dmPartnerName, isMuted, isVideoOff]);
 
   const [captions] = useState<Caption[]>(() => [
     { speaker: "Sarah Chen", text: "Let's review the Q3 product roadmap. We need to finalize the timeline by end of week.", timestamp: 1700000000000 },
@@ -488,7 +520,7 @@ export default function MeetingRoomPage() {
             🎥
           </div>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>Product Sync — Q3 Roadmap</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{meetingTitle}</div>
             <div style={{ fontSize: 11, color: "hsl(var(--text-muted))" }}>
               {formatTime(elapsed)} · {participants.length} participants
               {isRecording && (
