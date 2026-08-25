@@ -99,11 +99,12 @@ export default function WorkspacePage() {
   let chatInitials = userInitials;
   
   if (activeChannel && activeChannel.type === "dm") {
-    // Extract the partner ID from 'dm-userA-userB'
-    const partnerId = activeChannel.name
-      .replace("dm-", "")
-      .replace(user?.id || "", "")
-      .replace("-", "");
+    // Exact format: 'dm-UUID1-UUID2' (76 chars total after dm-)
+    const nameWithoutDm = activeChannel.name.replace("dm-", "");
+    const uuid1 = nameWithoutDm.substring(0, 36);
+    const uuid2 = nameWithoutDm.substring(37, 73);
+    const partnerId = uuid1 === user?.id ? uuid2 : uuid1;
+    
     const partner = usersById[partnerId];
     if (partner) {
       chatTitle = partner.display_name || partner.username;

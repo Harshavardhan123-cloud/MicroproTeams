@@ -24,7 +24,23 @@ export default function Composer() {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
+  const usersById = useAppStore((s) => s.usersById);
+
   const channel = channels.find((c) => c.id === activeChannelId);
+
+  let placeholderName = channel ? `#${channel.name}` : "...";
+  if (channel && channel.type === "dm") {
+    const nameWithoutDm = channel.name.replace("dm-", "");
+    const uuid1 = nameWithoutDm.substring(0, 36);
+    const uuid2 = nameWithoutDm.substring(37, 73);
+    const partnerId = uuid1 === userId ? uuid2 : uuid1;
+    const partner = usersById[partnerId];
+    if (partner) {
+      placeholderName = partner.display_name || partner.username;
+    } else {
+      placeholderName = "Direct Message";
+    }
+  }
 
   // Auto-resize textarea as content grows
   const handleResize = useCallback(() => {
@@ -167,7 +183,7 @@ export default function Composer() {
         <textarea
           ref={textareaRef}
           className="composer-input"
-          placeholder={`Message ${channel ? `#${channel.name}` : "..."}`}
+          placeholder={`Message ${placeholderName}`}
           value={value}
           rows={1}
           style={{ minHeight: 36, maxHeight: 180, overflowY: "auto" }}
