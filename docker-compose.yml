@@ -1,0 +1,244 @@
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: micropro_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-micropro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-micropro_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-microproteams}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U micropro -d microproteams"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - micropro_net
+
+  # ─── Redis ──────────────────────────────────────────────────────
+  redis:
+    image: redis:7.4-alpine
+    container_name: micropro_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secret} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - micropro_net
+
+  # ─── MinIO ──────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: micropro_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_secret}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - micropro_net
+
+  # ─── Keycloak ───────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    container_name: micropro_keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-micropro}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-micropro_secret}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_secret}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - micropro_net
+
+  # ─── FastAPI Backend ─────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: micropro_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-micropro}:${POSTGRES_PASSWORD:-micropro_secret}@postgres:5432/${POSTGRES_DB:-microproteams}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      KEYCLOAK_URL: http://keycloak:8080
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:3001","http://localhost:8088","http://127.0.0.1:3001","http://192.168.1.147:3001","http://192.168.1.147:8088"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./whisper_models:/app/whisper_models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - micropro_net
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ─── Socket.io WebSocket Server ─────────────────────────────────
+  websocket:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: micropro_websocket
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-micropro}:${POSTGRES_PASSWORD:-micropro_secret}@postgres:5432/${POSTGRES_DB:-microproteams}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:3001","http://localhost:8088","http://127.0.0.1:3001","http://192.168.1.147:3001","http://192.168.1.147:8088"]'
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - api
+      - redis
+    networks:
+      - micropro_net
+    command: uvicorn websocket_server:app --host 0.0.0.0 --port 8001 --reload
+
+  # ─── Celery Worker (AI Jobs) ─────────────────────────────────────
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: micropro_celery
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-micropro}:${POSTGRES_PASSWORD:-micropro_secret}@postgres:5432/${POSTGRES_DB:-microproteams}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
+    volumes:
+      - ./backend:/app
+      - ./whisper_models:/app/whisper_models
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - micropro_net
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2 -Q ai_tasks,default
+
+  # ─── Celery Beat (Scheduler) ─────────────────────────────────────
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: micropro_celery_beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    networks:
+      - micropro_net
+    command: celery -A tasks.celery_app beat --loglevel=info
+
+  # ─── mediasoup SFU Server ────────────────────────────────────────
+  mediasoup:
+    build:
+      context: ./mediasoup-server
+      dockerfile: Dockerfile
+    container_name: micropro_mediasoup
+    restart: unless-stopped
+    network_mode: host  # Required for WebRTC UDP/TCP
+    environment:
+      MEDIASOUP_LISTEN_IP: 0.0.0.0
+      MEDIASOUP_ANNOUNCED_IP: ${SERVER_IP:-192.168.1.147}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@127.0.0.1:6379/1
+      API_SECRET: ${API_SECRET:-api_secret}
+    # No source bind mount — node_modules live inside the image
+
+  # ─── Next.js Frontend ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://192.168.1.147:8000/api/v1
+        NEXT_PUBLIC_WS_URL: http://192.168.1.147:8001
+        NEXT_PUBLIC_MEDIASOUP_URL: http://192.168.1.147:3000
+    container_name: micropro_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://192.168.1.147:8000/api/v1
+      NEXT_PUBLIC_WS_URL: http://192.168.1.147:8001
+      NEXT_PUBLIC_MEDIASOUP_URL: http://192.168.1.147:3000
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+    networks:
+      - micropro_net
+
+  # ─── Nginx Reverse Proxy ─────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: micropro_nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8088}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+      - frontend
+      - websocket
+    networks:
+      - micropro_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  micropro_net:
+    driver: bridge

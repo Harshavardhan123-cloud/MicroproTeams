@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Builds
+.next/
+dist/
+build/
+out/
+
+# Caches & Storage
+whisper_models/
+*.log
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+.claude/
