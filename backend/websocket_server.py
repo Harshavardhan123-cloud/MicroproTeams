@@ -78,6 +78,17 @@ async def connect(sid, environ, auth):
     _user_sessions[sid] = user_id
     _user_sids.setdefault(user_id, []).append(sid)
 
+    # Join a personal room for direct events (like new DMs)
+    await sio.enter_room(sid, f"user:{user_id}")
+
+    # Auto-join all channels the user is a member of
+    async with AsyncSessionLocal() as session:
+        memberships = await session.execute(
+            select(ChannelMember.channel_id).where(ChannelMember.user_id == user_id)
+        )
+        for row in memberships.all():
+            await sio.enter_room(sid, f"channel:{row.channel_id}")
+
     # Update presence to online
     redis = await _get_redis()
     await redis.hset("presence", user_id, "online")
@@ -142,10 +153,23 @@ async def message_send(sid, data):
     data: { channel_id, message_id, content, author_id, created_at, thread_id, is_encrypted }
     """
     channel_id = (data or {}).get("channel_id")
-    if not channel_id or f"channel:{channel_id}" not in sio.rooms(sid):
+    if not channel_id:
         return
-    # Broadcast to all in channel room
+        
+    # We broadcast to the channel room first
     await sio.emit("message:new", data, room=f"channel:{channel_id}", skip_sid=sid)
+    
+    # And we also specifically alert all members in their user rooms in case they haven't joined the channel room yet (e.g. new DM)
+    async with AsyncSessionLocal() as session:
+        members = await session.execute(
+            select(ChannelMember.user_id).where(ChannelMember.channel_id == channel_id)
+        )
+        for row in members.all():
+            member_id = row.user_id
+            if member_id != _user_sessions.get(sid):
+                # Emit to user room (socketio handles deduplication if we used multiple rooms, but here we emit explicitly)
+                await sio.emit("message:new", data, room=f"user:{member_id}")
+
     # Pub to Redis for other server instances
     redis = await _get_redis()
     await redis.publish(f"channel:{channel_id}", json.dumps({"event": "message:new", "data": data}))

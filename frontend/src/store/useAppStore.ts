@@ -165,6 +165,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           ],
         },
       }));
+      const { getSocket } = await import("@/lib/socket");
+      const socket = getSocket();
+      if (socket) {
+        socket.emit("message:send", message);
+      }
       return message;
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Failed to send message" });
