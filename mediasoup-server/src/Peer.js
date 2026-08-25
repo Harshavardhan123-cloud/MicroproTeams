@@ -27,6 +27,10 @@ class Peer {
     return this._producers.get(producerId);
   }
 
+  getProducers() {
+    return Array.from(this._producers.values());
+  }
+
   addConsumer(consumer) {
     this._consumers.set(consumer.id, consumer);
   }

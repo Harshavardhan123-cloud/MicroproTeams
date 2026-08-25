@@ -230,6 +230,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("get-producers", (ack) => {
+    if (!currentRoom) return ack([]);
+    const producersList = [];
+    currentRoom.getPeers().forEach((peer) => {
+      if (peer.id === currentPeerId) return;
+      peer.getProducers().forEach((producer) => {
+        producersList.push({
+          producerId: producer.id,
+          peerId: peer.id,
+          kind: producer.kind,
+          appData: producer.appData,
+        });
+      });
+    });
+    ack(producersList);
+  });
+
   socket.on("meeting:action", ({ roomId, peerId, action, payload }) => {
     // Broadcast hand raises, emojis, etc. to everyone else in the room
     socket.to(roomId).emit("meeting:action", { peerId, action, payload });

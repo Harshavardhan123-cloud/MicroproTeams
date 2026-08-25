@@ -275,7 +275,13 @@ export default function MeetingRoomPage() {
                 else callback();
               });
             });
+
+            // Fetch and consume existing producers
+            socket.emit("get-producers", (producers: any[]) => {
+              producers.forEach(p => consumeProducer(p));
+            });
           });
+
         });
 
       } catch (err) {
@@ -283,25 +289,7 @@ export default function MeetingRoomPage() {
       }
     });
 
-    socket.on("peer-joined", ({ peerId, displayName }) => {
-      setParticipants(prev => {
-        if (prev.find(p => p.id === peerId)) return prev;
-        return [...prev, {
-          id: peerId,
-          displayName,
-          isMuted: false,
-          isVideoOff: false,
-          isSpeaking: false,
-          stream: new MediaStream()
-        }];
-      });
-    });
-
-    socket.on("peer-left", ({ peerId }) => {
-      setParticipants(prev => prev.filter(p => p.id !== peerId));
-    });
-
-    socket.on("new-producer", async ({ producerId, peerId, kind, appData }) => {
+    const consumeProducer = async ({ producerId, peerId, kind }: any) => {
       const device = deviceRef.current;
       const transport = recvTransportRef.current;
       if (!device || !transport) return;
@@ -335,7 +323,27 @@ export default function MeetingRoomPage() {
 
         socket.emit("resume-consumer", { consumerId: consumer.id }, () => {});
       });
+    };
+
+    socket.on("peer-joined", ({ peerId, displayName }) => {
+      setParticipants(prev => {
+        if (prev.find(p => p.id === peerId)) return prev;
+        return [...prev, {
+          id: peerId,
+          displayName,
+          isMuted: false,
+          isVideoOff: false,
+          isSpeaking: false,
+          stream: new MediaStream()
+        }];
+      });
     });
+
+    socket.on("peer-left", ({ peerId }) => {
+      setParticipants(prev => prev.filter(p => p.id !== peerId));
+    });
+
+    socket.on("new-producer", consumeProducer);
 
     socket.on("meeting:action", ({ peerId, action, payload }) => {
       if (action === "hand-raise") {
