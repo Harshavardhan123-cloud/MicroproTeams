@@ -159,6 +159,7 @@ export default function MeetingRoomPage() {
   const sendTransportRef = useRef<mediasoupClient.types.Transport | null>(null);
   const recvTransportRef = useRef<mediasoupClient.types.Transport | null>(null);
   const consumersRef = useRef<Map<string, mediasoupClient.types.Consumer>>(new Map());
+  const screenProducerIdRef = useRef<string | null>(null);
 
   // Set up local media immediately
   useEffect(() => {
@@ -293,7 +294,7 @@ export default function MeetingRoomPage() {
       }
     });
 
-    const consumeProducer = async ({ producerId, peerId, kind }: any) => {
+    const consumeProducer = async ({ producerId, peerId, kind, appData }: any) => {
       const device = deviceRef.current;
       const transport = recvTransportRef.current;
       if (!device || !transport) return;
@@ -314,16 +315,30 @@ export default function MeetingRoomPage() {
 
         consumersRef.current.set(consumer.id, consumer);
 
-        setParticipants(prev => prev.map(p => {
-          if (p.id === peerId) {
-            if (p.stream) p.stream.addTrack(consumer.track);
-            else p.stream = new MediaStream([consumer.track]);
-            
-            if (kind === "video") p.isVideoOff = false;
-            if (kind === "audio") p.isMuted = false;
+        setParticipants(prev => {
+          if (appData?.type === "screen") {
+            const owner = prev.find(p => p.id === peerId);
+            return [...prev, {
+              id: `${peerId}-screen`,
+              displayName: owner ? `${owner.displayName}'s Screen` : "Screen",
+              isMuted: true,
+              isVideoOff: false,
+              isSpeaking: false,
+              stream: new MediaStream([consumer.track])
+            }];
+          } else {
+            return prev.map(p => {
+              if (p.id === peerId) {
+                if (p.stream) p.stream.addTrack(consumer.track);
+                else p.stream = new MediaStream([consumer.track]);
+                
+                if (kind === "video") p.isVideoOff = false;
+                if (kind === "audio") p.isMuted = false;
+              }
+              return p;
+            });
           }
-          return p;
-        }));
+        });
 
         socket.emit("resume-consumer", { consumerId: consumer.id }, () => {});
       });
@@ -344,7 +359,13 @@ export default function MeetingRoomPage() {
     });
 
     socket.on("peer-left", ({ peerId }) => {
-      setParticipants(prev => prev.filter(p => p.id !== peerId));
+      setParticipants(prev => prev.filter(p => p.id !== peerId && p.id !== `${peerId}-screen`));
+    });
+
+    socket.on("producer-closed", ({ producerId, peerId }) => {
+      // For now, if a producer is closed, we'll assume it might be a screen share ending
+      // We can just remove the screen participant
+      setParticipants(prev => prev.filter(p => p.id !== `${peerId}-screen`));
     });
 
     socket.on("new-producer", consumeProducer);
@@ -443,17 +464,26 @@ export default function MeetingRoomPage() {
         screenStreamRef.current = stream;
         const track = stream.getVideoTracks()[0];
         
-        await sendTransportRef.current.produce({ track, appData: { type: "screen" } });
+        const producer = await sendTransportRef.current.produce({ track, appData: { type: "screen" } });
+        screenProducerIdRef.current = producer.id;
         setIsScreenSharing(true);
 
         track.onended = () => {
           setIsScreenSharing(false);
+          if (screenProducerIdRef.current) {
+            socketRef.current?.emit("close-producer", { producerId: screenProducerIdRef.current });
+            screenProducerIdRef.current = null;
+          }
           screenStreamRef.current = null;
         };
       } catch (err) {}
     } else {
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
       setIsScreenSharing(false);
+      if (screenProducerIdRef.current) {
+        socketRef.current?.emit("close-producer", { producerId: screenProducerIdRef.current });
+        screenProducerIdRef.current = null;
+      }
     }
   };
 

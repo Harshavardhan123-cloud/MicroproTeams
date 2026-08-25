@@ -230,6 +230,22 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("close-producer", ({ producerId }, ack) => {
+    try {
+      if (!currentRoom || !currentPeerId) return;
+      const peer = currentRoom.getPeer(currentPeerId);
+      const producer = peer.getProducer(producerId);
+      if (producer) {
+        producer.close();
+        // Also inform other clients so they can remove the video tile
+        socket.to(currentRoom.id).emit("producer-closed", { producerId, peerId: currentPeerId });
+      }
+      if (ack) ack({ success: true });
+    } catch (e) {
+      if (ack) ack({ error: e.message });
+    }
+  });
+
   socket.on("get-producers", (ack) => {
     if (!currentRoom) return ack([]);
     const producersList = [];
