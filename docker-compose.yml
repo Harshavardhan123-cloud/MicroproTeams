@@ -186,13 +186,17 @@ services:
       dockerfile: Dockerfile
     container_name: micropro_mediasoup
     restart: unless-stopped
-    network_mode: host  # Required for WebRTC UDP/TCP
+    ports:
+      - "3000:3000"
+      - "40000-40100:40000-40100/udp"
+      - "40000-40100:40000-40100/tcp"
     environment:
       MEDIASOUP_LISTEN_IP: 0.0.0.0
       MEDIASOUP_ANNOUNCED_IP: ${SERVER_IP:-192.168.1.147}
       REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@127.0.0.1:6379/1
       API_SECRET: ${API_SECRET:-api_secret}
-    # No source bind mount — node_modules live inside the image
+    networks:
+      - micropro_net
 
   # ─── Next.js Frontend ────────────────────────────────────────────
   frontend:

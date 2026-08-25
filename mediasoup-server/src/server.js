@@ -83,7 +83,7 @@ async function createWorkers() {
     const worker = await mediasoup.createWorker({
       logLevel: "warn",
       rtcMinPort: 40000,
-      rtcMaxPort: 49999,
+      rtcMaxPort: 40100,
     });
     worker.on("died", () => {
       log.error(`Worker ${worker.pid} died — restarting`);
