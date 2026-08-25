@@ -114,3 +114,7 @@ async def get_me(current_user: CurrentUser):
 async def logout(current_user: CurrentUser):
     """Logout — client should discard tokens. Future: add token to blocklist in Redis."""
     return Response(status_code=204)
+
+
+def code():
+    print(settings.CORS_ORIGINS)
