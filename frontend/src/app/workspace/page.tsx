@@ -142,7 +142,7 @@ export default function WorkspacePage() {
 
         {/* Content Split: Sidebar + Active Chat View */}
         <div className="teams-body-layout">
-          {/* Chat & Channels Navigation Sidebar */}
+          {/* Chat Navigation Sidebar */}
           <Sidebar onCreateChannel={() => setModal("channel")} />
 
           {/* Main Active Chat Area */}
@@ -188,11 +188,11 @@ export default function WorkspacePage() {
 
       {modal === "channel" && (
         <CreateModal
-          title="Create a channel"
-          label="Channel name"
-          placeholder="engineering"
-          submitLabel="Create channel"
-          description="Channels are where your team communicates. They work best organised around a topic."
+          title="Create a chat"
+          label="Chat name"
+          placeholder="e.g. Marketing Team Sync"
+          submitLabel="Create chat"
+          description="Chats are private and user-specific spaces where your team communicates."
           onSubmit={(name) => createChannel(name)}
           onClose={() => setModal(null)}
         />

@@ -21,7 +21,7 @@ class ChannelCreateRequest(BaseModel):
     team_id: Optional[str] = None
     name: str
     description: Optional[str] = None
-    type: str = ChannelType.PUBLIC.value
+    type: str = ChannelType.PRIVATE.value
     topic: Optional[str] = None
 
 
@@ -71,10 +71,7 @@ async def list_channels(workspace_id: str, current_user: CurrentUser, db: AsyncS
         .where(
             Channel.workspace_id == workspace_id,
             Channel.is_archived == False,
-            or_(
-                Channel.type == ChannelType.PUBLIC.value,
-                Channel.id.in_(member_subq)
-            )
+            Channel.id.in_(member_subq)
         )
     )
     return [ChannelResponse.model_validate(c) for c in result.scalars().all()]

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Video, Edit, ChevronDown, ChevronRight, Hash, Lock, Plus } from "lucide-react";
+import { Search, Video, Edit, ChevronDown, ChevronRight, Hash, Lock, Plus, MessageSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/store/useAppStore";
 import type { Channel } from "@/lib/types";
@@ -49,7 +49,7 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
           </button>
           <button
             className="sidebar-action-btn"
-            title="New Chat / Channel"
+            title="New Chat"
             onClick={onCreateChannel}
           >
             <Edit size={16} />
@@ -125,7 +125,7 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
               e.stopPropagation();
               onCreateChannel();
             }}
-            title="Create channel"
+            title="Create chat"
           >
             <Plus size={14} />
           </button>
@@ -143,7 +143,7 @@ export default function Sidebar({ onCreateChannel }: SidebarProps) {
                 >
                   <div className="chat-avatar-container">
                     <div className="teams-channel-avatar">
-                      {channel.type === "private" ? <Lock size={13} /> : <Hash size={14} />}
+                      {channel.type === "private" ? <Lock size={13} /> : <MessageSquare size={14} />}
                     </div>
                   </div>
                   <div className="teams-chat-info">

@@ -188,7 +188,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const channel = await api.channels.create({
         workspace_id: workspace.id,
-        name: slugify(name),
+        name: name.trim(),
         description,
       });
       set((state) => ({ channels: [...state.channels, channel] }));
