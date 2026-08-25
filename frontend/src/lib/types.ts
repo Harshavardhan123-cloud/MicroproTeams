@@ -43,6 +43,7 @@ export interface Channel {
   message_count: number;
   created_by: string;
   created_at: string;
+  member_ids?: string[];
 }
 
 export interface Message {

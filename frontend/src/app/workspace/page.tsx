@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Video, Edit3, MoreHorizontal } from "lucide-react";
+import { Search, Video, Edit3, MoreHorizontal, Users } from "lucide-react";
 
 import AppRail from "@/components/AppRail";
 import TopHeader from "@/components/TopHeader";
@@ -11,6 +11,7 @@ import MessageList from "@/components/MessageList";
 import Composer from "@/components/Composer";
 import TypingIndicator from "@/components/TypingIndicator";
 import CreateModal from "@/components/CreateModal";
+import NewChatModal from "@/components/NewChatModal";
 import { useAppStore } from "@/store/useAppStore";
 import { useRealtime } from "@/hooks/useRealtime";
 import { tokens } from "@/lib/api";
@@ -70,6 +71,7 @@ export default function WorkspacePage() {
   const channels = useAppStore((s) => s.channels);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const user = useAppStore((s) => s.user);
+  const usersById = useAppStore((s) => s.usersById);
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
   const createChannel = useAppStore((s) => s.createChannel);
@@ -91,8 +93,36 @@ export default function WorkspacePage() {
   useRealtime(authed && bootstrapped);
 
   const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
-  const userName = user?.display_name || user?.username || "Harshavardhan Chatte";
+  const userName = user?.display_name || user?.username || "User";
   const userInitials = userName.slice(0, 2).toUpperCase();
+
+  // Compute display name and avatar for the active channel header
+  const isDMChannel = activeChannel && (activeChannel.type === "dm" || activeChannel.type === "group_dm");
+  const isGroupDM = activeChannel?.type === "group_dm";
+  const isSelfChat = isDMChannel && activeChannel.member_ids?.length === 1 && activeChannel.member_ids[0] === user?.id;
+
+  let headerTitle = `${userName} (You)`;
+  let headerInitials = userInitials;
+
+  if (activeChannel) {
+    if (isDMChannel && activeChannel.member_ids && user) {
+      const otherIds = activeChannel.member_ids.filter((id) => id !== user.id);
+      if (isSelfChat) {
+        headerTitle = `${userName} (You)`;
+        headerInitials = userInitials;
+      } else if (otherIds.length === 1) {
+        const other = usersById[otherIds[0]];
+        headerTitle = other?.display_name || activeChannel.name;
+        headerInitials = (other?.display_name || "??").slice(0, 2).toUpperCase();
+      } else {
+        const names = otherIds.map((id) => usersById[id]?.display_name).filter(Boolean);
+        headerTitle = names.length > 0 ? names.join(", ") : activeChannel.name;
+        headerInitials = `${activeChannel.member_ids.length}`;
+      }
+    } else {
+      headerTitle = activeChannel.name;
+    }
+  }
 
   if (!authed || !bootstrapped) {
     return (
@@ -152,12 +182,26 @@ export default function WorkspacePage() {
             {/* Header of Active Chat */}
             <header className="teams-chat-header">
               <div className="chat-header-title-box">
-                <div className="header-avatar-box">
-                  <span>{userInitials}</span>
-                  <span className="presence-green-dot" />
+                <div
+                  className="header-avatar-box"
+                  style={{
+                    background: isGroupDM
+                      ? "linear-gradient(135deg, hsl(170 70% 45%), hsl(220 70% 55%))"
+                      : isDMChannel && !isSelfChat
+                        ? "linear-gradient(135deg, hsl(280 60% 55%), hsl(200 80% 55%))"
+                        : undefined,
+                  }}
+                >
+                  {isGroupDM ? <Users size={16} /> : <span>{headerInitials}</span>}
+                  {!isGroupDM && <span className="presence-green-dot" />}
                 </div>
                 <div className="header-title-text">
-                  <span className="title-main">{activeChannel ? activeChannel.name : `${userName} (You)`}</span>
+                  <span className="title-main">{headerTitle}</span>
+                  {isGroupDM && activeChannel?.member_ids && (
+                    <span style={{ fontSize: 11, color: "hsl(var(--text-muted))", marginLeft: 8 }}>
+                      {activeChannel.member_ids.length} members
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -189,15 +233,7 @@ export default function WorkspacePage() {
       </div>
 
       {modal === "channel" && (
-        <CreateModal
-          title="Create a channel"
-          label="Channel name"
-          placeholder="engineering"
-          submitLabel="Create channel"
-          description="Channels are where your team communicates. They work best organised around a topic."
-          onSubmit={(name) => createChannel(name)}
-          onClose={() => setModal(null)}
-        />
+        <NewChatModal onClose={() => setModal(null)} />
       )}
 
       {error && (

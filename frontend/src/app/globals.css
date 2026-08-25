@@ -1408,3 +1408,7 @@ body {
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* ── New Chat Modal — User Row ───────────────────────────────────── */
+.new-chat-user-row:hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}

@@ -43,6 +43,7 @@ interface AppState {
   sendMessage: (content: string) => Promise<Message | null>;
   createWorkspace: (name: string) => Promise<Workspace | null>;
   createChannel: (name: string, description?: string) => Promise<Channel | null>;
+  createDMChat: (memberIds: string[]) => Promise<Channel | null>;
   receiveMessage: (payload: MessageBroadcast) => void;
   setPresence: (userId: string, status: PresenceStatus) => void;
   updateUserPresence: (status: PresenceStatus) => void;
@@ -196,6 +197,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       return channel;
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Failed to create channel" });
+      return null;
+    }
+  },
+
+  async createDMChat(memberIds) {
+    const { workspace } = get();
+    if (!workspace) return null;
+
+    try {
+      const channel = await api.channels.createDM({
+        workspace_id: workspace.id,
+        member_ids: memberIds,
+      });
+      // Add to channel list if not already present (duplicate prevention returns existing)
+      set((state) => {
+        const exists = state.channels.some((c) => c.id === channel.id);
+        return exists ? state : { channels: [...state.channels, channel] };
+      });
+      await get().selectChannel(channel.id);
+      return channel;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to create chat" });
       return null;
     }
   },
