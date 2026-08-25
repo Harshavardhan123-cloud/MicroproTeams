@@ -3,14 +3,14 @@ Messages API — send, edit, delete, react, thread, paginate.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
 from core.database import get_db
 from core.dependencies import CurrentUser
-from models.message import Message, MessageReaction, MessageAttachment
+from models.message import Message, MessageReaction
 from models.workspace import ChannelMember
 
 router = APIRouter()
@@ -70,7 +70,7 @@ async def get_messages(
     """Paginated message history (cursor-based, newest first)."""
     query = (
         select(Message)
-        .where(Message.channel_id == channel_id, Message.is_deleted == False, Message.thread_id == None)
+        .where(Message.channel_id == channel_id, Message.is_deleted.is_(False), Message.thread_id.is_(None))
         .order_by(desc(Message.created_at))
         .limit(limit)
     )
@@ -175,7 +175,7 @@ async def pin_message(message_id: str, current_user: CurrentUser, db: AsyncSessi
 @router.get("/{message_id}/thread", response_model=List[MessageResponse])
 async def get_thread(message_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Message).where(Message.thread_id == message_id, Message.is_deleted == False)
+        select(Message).where(Message.thread_id == message_id, Message.is_deleted.is_(False))
         .order_by(Message.created_at)
     )
     return [MessageResponse.model_validate(m) for m in result.scalars().all()]

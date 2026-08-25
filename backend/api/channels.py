@@ -3,7 +3,7 @@ Channels API — create, list, join, leave, update channels.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -99,7 +99,7 @@ async def create_dm(payload: DMCreateRequest, current_user: CurrentUser, db: Asy
         .where(
             Channel.workspace_id == payload.workspace_id,
             Channel.type.in_([ChannelType.DM.value, ChannelType.GROUP_DM.value]),
-            Channel.is_archived == False,
+            Channel.is_archived.is_(False),
             Channel.id.in_(candidate_ids_q),
         )
     )
@@ -169,7 +169,7 @@ async def list_channels(workspace_id: str, current_user: CurrentUser, db: AsyncS
         select(Channel)
         .where(
             Channel.workspace_id == workspace_id,
-            Channel.is_archived == False,
+            Channel.is_archived.is_(False),
             or_(
                 Channel.type == ChannelType.PUBLIC.value,
                 Channel.id.in_(member_subq)

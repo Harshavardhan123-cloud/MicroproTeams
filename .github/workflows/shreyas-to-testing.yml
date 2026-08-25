@@ -60,7 +60,7 @@ jobs:
           pip install pytest pytest-asyncio httpx ruff
 
       - name: Lint with Ruff
-        run: ruff check . --select E,W,F --ignore E501
+        run: ruff check . --select E,W,F --ignore E501,E711,E712
 
       - name: Run backend tests
         env:

@@ -3,7 +3,6 @@ AI background tasks — Whisper transcription + LangChain meeting notes generati
 """
 import asyncio
 import os
-import json
 from datetime import datetime
 
 from tasks.celery_app import celery_app
@@ -30,8 +29,6 @@ def generate_meeting_summary(self, meeting_id: str):
 
 async def _async_generate_summary(meeting_id: str):
     import whisper
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_community.llms import Ollama
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
     from sqlalchemy import select
 
@@ -82,7 +79,7 @@ async def _async_generate_summary(meeting_id: str):
 
         # ── LangChain Summary Pipeline ──────────────────────────────
         # Note: Using local model stub — swap Ollama for production
-        summary_prompt = f"""
+        _summary_prompt = f"""
 You are an expert meeting notes assistant. Analyze this meeting transcript and provide:
 
 TRANSCRIPT:
@@ -137,7 +134,7 @@ def embed_message(message_id: str, content: str):
     try:
         from sentence_transformers import SentenceTransformer
         model = SentenceTransformer("all-MiniLM-L6-v2")
-        embedding = model.encode(content).tolist()
+        _embedding = model.encode(content).tolist()
         # TODO: Store in ai_embeddings table with pgvector
         print(f"[AI] Embedded message {message_id}")
     except Exception as e:

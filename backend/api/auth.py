@@ -1,7 +1,6 @@
 """
 Authentication API — register, login, refresh, logout, SSO.
 """
-from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,9 +10,8 @@ from core.database import get_db
 from core.security import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
-    generate_key_pair, generate_secure_token
+    generate_key_pair
 )
-from core.config import settings
 from core.dependencies import CurrentUser
 from models.user import User
 from schemas.auth import (

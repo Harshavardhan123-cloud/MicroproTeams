@@ -3,7 +3,7 @@ Workspace, Team, Channel, ChannelMember ORM models.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, Integer, Enum as SAEnum
+from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from core.database import Base
 import enum

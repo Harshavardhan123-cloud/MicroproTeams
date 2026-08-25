@@ -6,8 +6,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from jose import jwt
 from nacl.public import PrivateKey, Box, PublicKey
 from nacl.encoding import Base64Encoder
 import nacl.secret

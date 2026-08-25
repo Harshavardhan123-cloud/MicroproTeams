@@ -13,7 +13,6 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -110,8 +109,6 @@ class WhisperLocalProvider(AIProvider):
         return await loop.run_in_executor(None, self._transcribe_sync, audio_bytes, language)
 
     def _transcribe_sync(self, audio_bytes: bytes, language: str) -> Transcript:
-        import numpy as np  # type: ignore
-
         model = self._load_model()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(audio_bytes)

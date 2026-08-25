@@ -21,7 +21,7 @@ async def search_users(
     current_user: CurrentUser = None,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(User).where(User.is_active == True)
+    query = select(User).where(User.is_active.is_(True))
     if q:
         like = f"%{q}%"
         query = query.where(or_(User.display_name.ilike(like), User.email.ilike(like), User.username.ilike(like)))
