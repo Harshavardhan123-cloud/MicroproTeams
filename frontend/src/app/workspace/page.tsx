@@ -61,7 +61,7 @@ function CenteredNotice({
 
 export default function WorkspacePage() {
   const router = useRouter();
-  const [authed, setAuthed] = useState(false);
+  const authed = Boolean(tokens.access);
   const [modal, setModal] = useState<ModalKind>(null);
 
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -79,9 +79,7 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (!tokens.access) {
       router.replace("/login");
-      return;
     }
-    setAuthed(true);
   }, [router]);
 
   useEffect(() => {

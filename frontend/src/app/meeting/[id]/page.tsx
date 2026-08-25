@@ -380,9 +380,9 @@ export default function MeetingRoomPage() {
     },
   ]);
 
-  const [captions] = useState<Caption[]>([
-    { speaker: "Sarah Chen", text: "Let's review the Q3 product roadmap. We need to finalize the timeline by end of week.", timestamp: Date.now() - 60000 },
-    { speaker: "James Okafor", text: "Agreed. The main blocker is the API integration work — I'll send an update by Friday.", timestamp: Date.now() - 30000 },
+  const [captions] = useState<Caption[]>(() => [
+    { speaker: "Sarah Chen", text: "Let's review the Q3 product roadmap. We need to finalize the timeline by end of week.", timestamp: 1700000000000 },
+    { speaker: "James Okafor", text: "Agreed. The main blocker is the API integration work — I'll send an update by Friday.", timestamp: 1700000030000 },
   ]);
 
   // Timer

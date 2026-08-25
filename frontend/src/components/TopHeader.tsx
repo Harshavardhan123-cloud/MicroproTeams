@@ -117,7 +117,7 @@ export default function TopHeader() {
                 </div>
               ))
             ) : (
-              <div className="search-no-results">No channels matching "{searchQuery}"</div>
+              <div className="search-no-results">No channels matching &quot;{searchQuery}&quot;</div>
             )}
           </div>
         )}
@@ -167,7 +167,7 @@ export default function TopHeader() {
                 <div className="profile-name">{displayName}</div>
                 <div className="profile-email">{email}</div>
                 {user?.custom_status && (
-                  <div className="profile-custom-status-text">"{user.custom_status}"</div>
+                  <div className="profile-custom-status-text">&quot;{user.custom_status}&quot;</div>
                 )}
                 <a href="#account" className="microsoft-acc-link">
                   My Microsoft account ↗
