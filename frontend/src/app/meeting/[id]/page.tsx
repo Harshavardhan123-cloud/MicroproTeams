@@ -212,7 +212,7 @@ export default function MeetingRoomPage() {
         // 3. Join room
         socket.emit("join-room", { 
           roomId: meetingId, 
-          peerId: user.id, 
+          peerId: socket.id, 
           displayName: user.display_name || user.username 
         }, async (response: any) => {
           if (response.error) {
