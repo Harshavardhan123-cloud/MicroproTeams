@@ -17,7 +17,7 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentUser = useAppStore((s) => s.user);
   const createDMChat = useAppStore((s) => s.createDMChat);
