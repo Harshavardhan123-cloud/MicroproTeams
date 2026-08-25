@@ -11,7 +11,9 @@ import MessageList from "@/components/MessageList";
 import Composer from "@/components/Composer";
 import TypingIndicator from "@/components/TypingIndicator";
 import CreateModal from "@/components/CreateModal";
+import IncomingCallModal from "@/components/IncomingCallModal";
 import { useAppStore } from "@/store/useAppStore";
+import { getSocket } from "@/lib/socket";
 import { useRealtime } from "@/hooks/useRealtime";
 import { tokens } from "@/lib/api";
 
@@ -153,10 +155,37 @@ export default function WorkspacePage() {
     );
   }
 
+  const handleCall = (type: "audio" | "video") => {
+    if (!activeChannel) return;
+    
+    // Determine if it's a DM to ring the partner
+    if (activeChannel.type === "dm") {
+      const nameWithoutDm = activeChannel.name.replace("dm-", "");
+      const uuid1 = nameWithoutDm.substring(0, 36);
+      const uuid2 = nameWithoutDm.substring(37, 73);
+      const partnerId = uuid1 === user?.id ? uuid2 : uuid1;
+      
+      const socket = getSocket();
+      if (socket) {
+        socket.emit("call:ring", {
+          target_user_id: partnerId,
+          meeting_id: activeChannel.id,
+          type: type
+        });
+      }
+    }
+    
+    // Open the meeting page directly for the caller
+    router.push(`/meeting/${activeChannel.id}?audio=true${type === "video" ? "&video=true" : ""}`);
+  };
+
   return (
     <div className="teams-app-shell">
       {/* Leftmost Vertical Icon Rail */}
       {!isPopout && <AppRail activeTab="chat" />}
+      
+      {/* Global Modals */}
+      <IncomingCallModal />
 
       {/* Main Workspace Layout */}
       <div className="teams-main-wrapper">
@@ -189,14 +218,14 @@ export default function WorkspacePage() {
                 <button
                   className="teams-header-btn"
                   title="Start audio call"
-                  onClick={() => router.push(`/meeting/${activeChannel?.id || Date.now()}?audio=true`)}
+                  onClick={() => handleCall("audio")}
                 >
                   <Phone size={16} />
                 </button>
                 <button
                   className="teams-header-btn"
                   title="Start video call"
-                  onClick={() => router.push(`/meeting/${activeChannel?.id || Date.now()}`)}
+                  onClick={() => handleCall("video")}
                 >
                   <Video size={16} />
                 </button>

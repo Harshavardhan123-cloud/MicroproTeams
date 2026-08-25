@@ -22,12 +22,17 @@ export function useRealtime(enabled: boolean) {
     const socket = getSocket();
     if (!socket) return;
 
-    const { receiveMessage, setTyping, setPresence } = useAppStore.getState();
+    const { receiveMessage, setTyping, setPresence, setIncomingCall } = useAppStore.getState();
 
     const onMessage = (payload: MessageBroadcast) => receiveMessage(payload);
-    const onTyping = (p: TypingUpdate) =>
-      setTyping(p.channel_id, p.user_id, p.is_typing);
+    const onTyping = (p: TypingUpdate) => setTyping(p.channel_id, p.user_id, p.is_typing);
     const onPresence = (p: PresenceChange) => setPresence(p.user_id, p.status);
+    const onCallIncoming = (data: any) => setIncomingCall(data);
+    const onCallCancelled = () => setIncomingCall(null);
+    const onCallDeclined = () => {
+      // For the caller, if the call was declined, we could show a toast or something, but for now just clear state if we had any
+    };
+
     const onError = (err: Error) => {
       if (
         err.message?.includes("rejected") ||
@@ -46,12 +51,18 @@ export function useRealtime(enabled: boolean) {
     socket.on("message:new", onMessage);
     socket.on("typing:update", onTyping);
     socket.on("presence:change", onPresence);
+    socket.on("call:incoming", onCallIncoming);
+    socket.on("call:cancelled", onCallCancelled);
+    socket.on("call:declined", onCallDeclined);
     socket.on("connect_error", onError);
 
     return () => {
       socket.off("message:new", onMessage);
       socket.off("typing:update", onTyping);
       socket.off("presence:change", onPresence);
+      socket.off("call:incoming", onCallIncoming);
+      socket.off("call:cancelled", onCallCancelled);
+      socket.off("call:declined", onCallDeclined);
       socket.off("connect_error", onError);
     };
   }, [enabled]);

@@ -15,6 +15,13 @@ import type {
   Workspace,
 } from "@/lib/types";
 
+export interface IncomingCall {
+  caller_id: string;
+  target_user_id: string;
+  meeting_id: string;
+  type?: "audio" | "video";
+}
+
 interface AppState {
   // Session
   user: User | null;
@@ -36,6 +43,7 @@ interface AppState {
   bootstrapped: boolean;
   loadingMessages: boolean;
   error: string | null;
+  incomingCall: IncomingCall | null;
 
   // Actions
   bootstrap: () => Promise<void>;
@@ -52,6 +60,7 @@ interface AppState {
   updateCustomStatus: (statusMessage: string) => void;
   setTyping: (channelId: string, userId: string, isTyping: boolean) => void;
   setError: (error: string | null) => void;
+  setIncomingCall: (call: IncomingCall | null) => void;
   reset: () => void;
 }
 
@@ -79,6 +88,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bootstrapped: false,
   loadingMessages: false,
   error: null,
+  incomingCall: null,
 
   async bootstrap() {
     try {
@@ -319,6 +329,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setError(error) {
     set({ error });
+  },
+
+  setIncomingCall(call) {
+    set({ incomingCall: call });
   },
 
   reset() {

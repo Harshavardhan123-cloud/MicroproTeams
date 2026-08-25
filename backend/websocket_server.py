@@ -262,6 +262,45 @@ async def meeting_leave(sid, data):
         await sio.emit("meeting:participant_left", {"user_id": user_id}, room=f"meeting:{meeting_id}")
 
 
+# ── Ringing Signals ──────────────────────────────────────────────────
+@sio.on("call:ring")
+async def call_ring(sid, data):
+    """
+    User initiates a call to another user.
+    data: { target_user_id, meeting_id, type: "audio" | "video" }
+    """
+    target_user_id = (data or {}).get("target_user_id")
+    caller_id = _user_sessions.get(sid)
+    if target_user_id and caller_id:
+        # Pass the caller ID so the target knows who is calling
+        data["caller_id"] = caller_id
+        await sio.emit("call:incoming", data, room=f"user:{target_user_id}")
+
+@sio.on("call:decline")
+async def call_decline(sid, data):
+    """
+    User declines an incoming call.
+    data: { caller_id, meeting_id }
+    """
+    caller_id = (data or {}).get("caller_id")
+    target_user_id = _user_sessions.get(sid)
+    if caller_id and target_user_id:
+        data["target_user_id"] = target_user_id
+        await sio.emit("call:declined", data, room=f"user:{caller_id}")
+
+@sio.on("call:cancel")
+async def call_cancel(sid, data):
+    """
+    User cancels an outgoing call before it's answered.
+    data: { target_user_id, meeting_id }
+    """
+    target_user_id = (data or {}).get("target_user_id")
+    caller_id = _user_sessions.get(sid)
+    if target_user_id and caller_id:
+        data["caller_id"] = caller_id
+        await sio.emit("call:cancelled", data, room=f"user:{target_user_id}")
+
+
 async def shutdown_redis():
     """Close the shared Redis connection on app shutdown."""
     global _redis
