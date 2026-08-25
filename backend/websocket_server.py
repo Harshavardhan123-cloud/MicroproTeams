@@ -8,8 +8,11 @@ import socketio
 import json
 
 import redis.asyncio as aioredis
+from sqlalchemy import select
 from core.config import settings
 from core.security import decode_token
+from core.database import AsyncSessionLocal
+from models.workspace import ChannelMember
 
 # Async Socket.io server with Redis pub/sub for horizontal scaling
 sio = socketio.AsyncServer(
@@ -107,10 +110,21 @@ async def disconnect(sid):
 # ── Channel Rooms ────────────────────────────────────────────────────
 @sio.on("channel:join")
 async def channel_join(sid, data):
-    """Client joins a channel room to receive its messages."""
+    """Client joins a channel room to receive its messages. Validated against Postgres."""
     channel_id = (data or {}).get("channel_id")
-    if channel_id:
-        await sio.enter_room(sid, f"channel:{channel_id}")
+    user_id = _user_sessions.get(sid)
+    if channel_id and user_id:
+        async with AsyncSessionLocal() as session:
+            membership = await session.execute(
+                select(ChannelMember).where(
+                    ChannelMember.channel_id == channel_id,
+                    ChannelMember.user_id == user_id
+                )
+            )
+            if membership.scalar_one_or_none():
+                await sio.enter_room(sid, f"channel:{channel_id}")
+            else:
+                print(f"[WS] Unauthorized join attempt: user {user_id} -> channel {channel_id}")
 
 
 @sio.on("channel:leave")
@@ -128,7 +142,7 @@ async def message_send(sid, data):
     data: { channel_id, message_id, content, author_id, created_at, thread_id, is_encrypted }
     """
     channel_id = (data or {}).get("channel_id")
-    if not channel_id:
+    if not channel_id or f"channel:{channel_id}" not in sio.rooms(sid):
         return
     # Broadcast to all in channel room
     await sio.emit("message:new", data, room=f"channel:{channel_id}", skip_sid=sid)
@@ -140,21 +154,21 @@ async def message_send(sid, data):
 @sio.on("message:edit")
 async def message_edit(sid, data):
     channel_id = (data or {}).get("channel_id")
-    if channel_id:
+    if channel_id and f"channel:{channel_id}" in sio.rooms(sid):
         await sio.emit("message:updated", data, room=f"channel:{channel_id}", skip_sid=sid)
 
 
 @sio.on("message:delete")
 async def message_delete(sid, data):
     channel_id = (data or {}).get("channel_id")
-    if channel_id:
+    if channel_id and f"channel:{channel_id}" in sio.rooms(sid):
         await sio.emit("message:deleted", data, room=f"channel:{channel_id}", skip_sid=sid)
 
 
 @sio.on("message:react")
 async def message_react(sid, data):
     channel_id = (data or {}).get("channel_id")
-    if channel_id:
+    if channel_id and f"channel:{channel_id}" in sio.rooms(sid):
         await sio.emit("message:reaction", data, room=f"channel:{channel_id}", skip_sid=sid)
 
 
@@ -163,7 +177,7 @@ async def message_react(sid, data):
 async def typing_start(sid, data):
     channel_id = (data or {}).get("channel_id")
     user_id = _user_sessions.get(sid)
-    if channel_id and user_id:
+    if channel_id and user_id and f"channel:{channel_id}" in sio.rooms(sid):
         await sio.emit(
             "typing:update",
             {"channel_id": channel_id, "user_id": user_id, "is_typing": True},
@@ -176,7 +190,7 @@ async def typing_start(sid, data):
 async def typing_stop(sid, data):
     channel_id = (data or {}).get("channel_id")
     user_id = _user_sessions.get(sid)
-    if channel_id and user_id:
+    if channel_id and user_id and f"channel:{channel_id}" in sio.rooms(sid):
         await sio.emit(
             "typing:update",
             {"channel_id": channel_id, "user_id": user_id, "is_typing": False},

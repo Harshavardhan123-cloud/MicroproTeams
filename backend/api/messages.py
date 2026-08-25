@@ -68,6 +68,16 @@ async def get_messages(
     db: AsyncSession = Depends(get_db)
 ):
     """Paginated message history (cursor-based, newest first)."""
+    # Verify membership
+    membership = await db.execute(
+        select(ChannelMember).where(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == current_user.id
+        )
+    )
+    if not membership.scalar_one_or_none():
+        raise HTTPException(403, "Not a member of this channel")
+
     query = (
         select(Message)
         .where(Message.channel_id == channel_id, Message.is_deleted == False, Message.thread_id == None)
@@ -174,6 +184,20 @@ async def pin_message(message_id: str, current_user: CurrentUser, db: AsyncSessi
 
 @router.get("/{message_id}/thread", response_model=List[MessageResponse])
 async def get_thread(message_id: str, current_user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    parent_msg = await db.get(Message, message_id)
+    if not parent_msg:
+        raise HTTPException(404, "Thread not found")
+
+    # Verify membership
+    membership = await db.execute(
+        select(ChannelMember).where(
+            ChannelMember.channel_id == parent_msg.channel_id,
+            ChannelMember.user_id == current_user.id
+        )
+    )
+    if not membership.scalar_one_or_none():
+        raise HTTPException(403, "Not a member of this channel")
+
     result = await db.execute(
         select(Message).where(Message.thread_id == message_id, Message.is_deleted == False)
         .order_by(Message.created_at)
