@@ -1,0 +1,33 @@
+# Secrets / sensitive material — never commit
+.env
+frontend/certs/
+*.pfx
+*.key
+*.pem
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+backend/venv/
+venv/
+*.db
+
+# Node
+**/node_modules/
+frontend/dist/
+frontend/release/
+
+# Logs
+*.log
+
+# Uploads / runtime data
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Build artifacts
+*.exe
+*.AppImage
+
+# OS
+.DS_Store
