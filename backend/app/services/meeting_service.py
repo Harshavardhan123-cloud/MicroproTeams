@@ -137,6 +137,8 @@ class MeetingService:
         m = await self.get_by_id(meeting_id)
         if not m or m.status == MeetingStatus.ENDED:
             raise ValueError("Meeting not found or already ended")
+        if str(m.organization_id) != str(user.organization_id):
+            raise ValueError("Meeting not found or already ended")
 
         # Check existing participant record
         part_res = await self.db.execute(

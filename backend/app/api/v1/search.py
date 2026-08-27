@@ -3,9 +3,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy import or_, and_
 
 from app.core.database import get_db
-from app.models.models import User, Message, Team, Channel
+from app.models.models import User, Message, Team, Channel, DirectConversationMember
 from app.api.deps import get_current_user
 from app.core.response import success_response
 
@@ -48,12 +49,26 @@ async def global_search(
             for u in u_res.scalars().all()
         ]
 
-    # Search Messages
+    # Search Messages — scoped to channels in the caller's org, and DM
+    # conversations the caller is actually a member of (never cross-tenant,
+    # never someone else's private DMs).
     if type in ["all", "messages"]:
         m_res = await db.execute(
             select(Message)
+            .outerjoin(Channel, Message.channel_id == Channel.id)
+            .outerjoin(Team, Channel.team_id == Team.id)
+            .outerjoin(DirectConversationMember, and_(
+                Message.conversation_id == DirectConversationMember.conversation_id,
+                DirectConversationMember.user_id == current_user.id
+            ))
             .options(selectinload(Message.sender))
-            .where(Message.content.ilike(query_str))
+            .where(
+                Message.content.ilike(query_str),
+                or_(
+                    Team.organization_id == current_user.organization_id,
+                    DirectConversationMember.id.isnot(None)
+                )
+            )
             .order_by(Message.created_at.desc())
             .limit(10)
         )
@@ -84,11 +99,15 @@ async def global_search(
             for t in t_res.scalars().all()
         ]
 
-    # Search Channels
+    # Search Channels — scoped to the caller's org (via the owning team)
     if type in ["all", "channels"]:
         c_res = await db.execute(
             select(Channel)
-            .where(Channel.name.ilike(query_str))
+            .join(Team, Channel.team_id == Team.id)
+            .where(
+                Team.organization_id == current_user.organization_id,
+                Channel.name.ilike(query_str)
+            )
             .limit(10)
         )
         results["channels"] = [

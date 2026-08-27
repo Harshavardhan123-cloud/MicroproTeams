@@ -1,13 +1,16 @@
 import os
+import time
 import uuid
 import shutil
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.core.config import settings
 from app.models.models import (
     FileRecord, FileVersion, FileActivity, FilePermission, FileShare,
     FileStatus, FileVisibility, User
@@ -15,6 +18,12 @@ from app.models.models import (
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+SIGNED_URL_TTL_SECONDS = 900
+
+def _sign_file_url(file_id: str, expires: int) -> str:
+    message = f"{file_id}:{expires}".encode()
+    return hmac.new(settings.JWT_SECRET.encode(), message, hashlib.sha256).hexdigest()
 
 class FileService:
     def __init__(self, db: AsyncSession):
@@ -96,7 +105,7 @@ class FileService:
 
     async def upload_new_version(self, file_id: str, file: UploadFile, user: User) -> Optional[dict]:
         file_rec = await self.get_by_id(file_id)
-        if not file_rec or file_rec.deleted_at is not None:
+        if not file_rec or file_rec.deleted_at is not None or str(file_rec.organization_id) != str(user.organization_id):
             return None
 
         ver_res = await self.db.execute(select(FileVersion).where(FileVersion.file_id == file_id))
@@ -141,7 +150,7 @@ class FileService:
 
     async def restore_version(self, file_id: str, version_id: str, user: User) -> Optional[dict]:
         file_rec = await self.get_by_id(file_id)
-        if not file_rec or file_rec.deleted_at is not None:
+        if not file_rec or file_rec.deleted_at is not None or str(file_rec.organization_id) != str(user.organization_id):
             return None
 
         ver_res = await self.db.execute(
@@ -249,12 +258,18 @@ class FileService:
         await self.db.commit()
         return True
 
-    async def generate_signed_url(self, file_id: str, action: str = "download") -> Optional[str]:
+    async def generate_signed_url(self, file_id: str, user: User, action: str = "download") -> Optional[str]:
         f = await self.get_by_id(file_id)
-        if not f or f.deleted_at is not None:
+        if not f or f.deleted_at is not None or str(f.organization_id) != str(user.organization_id):
             return None
-        token = uuid.uuid4().hex
-        return f"/uploads/{f.storage_key}?action={action}&token={token}"
+        expires = int(time.time()) + SIGNED_URL_TTL_SECONDS
+        sig = _sign_file_url(file_id, expires)
+        return f"/api/v1/files/{file_id}/raw?action={action}&expires={expires}&sig={sig}"
+
+    async def verify_signed_url(self, file_id: str, expires: int, sig: str) -> bool:
+        if int(time.time()) > expires:
+            return False
+        return hmac.compare_digest(_sign_file_url(file_id, expires), sig)
 
     async def log_activity(self, file_id: str, user_id: str, action: str, metadata: Optional[dict] = None):
         import json

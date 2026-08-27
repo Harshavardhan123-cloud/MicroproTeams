@@ -374,6 +374,17 @@ async def remove_team_member(
     if not member:
         return error_response("MEMBER_NOT_FOUND", "Team member not found.", status_code=404)
 
+    if member.role == MemberRole.OWNER:
+        owner_count_res = await db.execute(
+            select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.role == MemberRole.OWNER)
+        )
+        if len(owner_count_res.scalars().all()) <= 1:
+            return error_response(
+                "LAST_OWNER",
+                "This is the team's only owner. Transfer ownership to another member before removing them.",
+                status_code=400
+            )
+
     await db.delete(member)
 
     # Cascade remove user from all private channels in this team

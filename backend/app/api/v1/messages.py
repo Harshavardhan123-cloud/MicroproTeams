@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.models.models import User, MessageType
 from app.api.deps import get_current_user
-from app.services.message_service import MessageService
+from app.services.message_service import MessageService, MessageAccessError
+from app.services.authorization_service import AuthorizationService
 from app.core.response import success_response, error_response
 
 router = APIRouter(tags=["Messages"])
@@ -30,6 +31,8 @@ async def get_channel_messages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if not await AuthorizationService.can_access_channel(current_user, channel_id, db):
+        return error_response("FORBIDDEN", "You do not have access to this channel.", status_code=403)
     svc = MessageService(db)
     messages = await svc.get_channel_messages(channel_id, limit)
     return success_response(messages)
@@ -41,6 +44,8 @@ async def post_channel_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if not await AuthorizationService.can_access_channel(current_user, channel_id, db):
+        return error_response("FORBIDDEN", "You do not have access to this channel.", status_code=403)
     svc = MessageService(db)
     message = await svc.create_message(
         sender_id=str(current_user.id),
@@ -59,7 +64,10 @@ async def get_message_replies(
     db: AsyncSession = Depends(get_db)
 ):
     svc = MessageService(db)
-    replies = await svc.get_replies(message_id)
+    try:
+        replies = await svc.get_replies(message_id, current_user)
+    except MessageAccessError as e:
+        return error_response("FORBIDDEN", str(e), status_code=403)
     return success_response(replies)
 
 @router.patch("/messages/{message_id}")
@@ -70,7 +78,10 @@ async def update_message(
     db: AsyncSession = Depends(get_db)
 ):
     svc = MessageService(db)
-    updated = await svc.update_message(message_id, str(current_user.id), req.content)
+    try:
+        updated = await svc.update_message(message_id, current_user, req.content)
+    except MessageAccessError as e:
+        return error_response("FORBIDDEN", str(e), status_code=403)
     if not updated:
         return error_response("UNAUTHORIZED", "Message not found or permission denied.", status_code=403)
     return success_response(updated)
@@ -82,7 +93,10 @@ async def delete_message(
     db: AsyncSession = Depends(get_db)
 ):
     svc = MessageService(db)
-    deleted = await svc.delete_message(message_id, str(current_user.id))
+    try:
+        deleted = await svc.delete_message(message_id, current_user)
+    except MessageAccessError as e:
+        return error_response("FORBIDDEN", str(e), status_code=403)
     if not deleted:
         return error_response("UNAUTHORIZED", "Message not found or permission denied.", status_code=403)
     return success_response({"message": "Message deleted successfully."})
@@ -95,7 +109,10 @@ async def toggle_message_reaction(
     db: AsyncSession = Depends(get_db)
 ):
     svc = MessageService(db)
-    updated = await svc.toggle_reaction(message_id, str(current_user.id), req.emoji)
+    try:
+        updated = await svc.toggle_reaction(message_id, current_user, req.emoji)
+    except MessageAccessError as e:
+        return error_response("FORBIDDEN", str(e), status_code=403)
     if not updated:
         return error_response("MESSAGE_NOT_FOUND", "Message not found.", status_code=404)
     return success_response(updated)
@@ -107,7 +124,10 @@ async def pin_message(
     db: AsyncSession = Depends(get_db)
 ):
     svc = MessageService(db)
-    pinned = await svc.pin_message(message_id, str(current_user.id))
+    try:
+        pinned = await svc.pin_message(message_id, current_user)
+    except MessageAccessError as e:
+        return error_response("FORBIDDEN", str(e), status_code=403)
     if not pinned:
         return error_response("MESSAGE_NOT_FOUND", "Message not found.", status_code=404)
     return success_response(pinned)
@@ -119,7 +139,10 @@ async def unpin_message(
     db: AsyncSession = Depends(get_db)
 ):
     svc = MessageService(db)
-    unpinned = await svc.unpin_message(message_id, str(current_user.id))
+    try:
+        unpinned = await svc.unpin_message(message_id, current_user)
+    except MessageAccessError as e:
+        return error_response("FORBIDDEN", str(e), status_code=403)
     if not unpinned:
         return error_response("MESSAGE_NOT_FOUND", "Message not found.", status_code=404)
     return success_response(unpinned)

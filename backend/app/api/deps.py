@@ -28,12 +28,17 @@ async def get_current_user(
     user_id: str = payload.get("sub")
     if user_id is None:
         raise credentials_exception
-        
+
+    try:
+        user_uuid = UUID(user_id)
+    except (ValueError, TypeError, AttributeError):
+        raise credentials_exception
+
     from sqlalchemy.orm import selectinload
     result = await db.execute(
         select(User)
         .options(selectinload(User.role))
-        .where(User.id == UUID(user_id))
+        .where(User.id == user_uuid)
     )
     user = result.scalars().first()
     if user is None:

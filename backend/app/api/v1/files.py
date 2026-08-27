@@ -1,12 +1,14 @@
+import os
 from typing import Optional, List
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.models import User, FileRecord, FileVersion, FileActivity
-from app.services.file_service import FileService
+from app.services.file_service import FileService, UPLOAD_DIR
 from app.core.response import success_response, error_response
 from sqlalchemy.future import select
 
@@ -148,7 +150,7 @@ async def get_download_url(
     db: AsyncSession = Depends(get_db)
 ):
     svc = FileService(db)
-    url = await svc.generate_signed_url(file_id, "download")
+    url = await svc.generate_signed_url(file_id, current_user, "download")
     if not url:
         return error_response("NOT_FOUND", "File not found.", status_code=404)
     await svc.log_activity(file_id, current_user.id, "DOWNLOADED")
@@ -161,11 +163,41 @@ async def get_preview_url(
     db: AsyncSession = Depends(get_db)
 ):
     svc = FileService(db)
-    url = await svc.generate_signed_url(file_id, "preview")
+    url = await svc.generate_signed_url(file_id, current_user, "preview")
     if not url:
         return error_response("NOT_FOUND", "File not found.", status_code=404)
     await svc.log_activity(file_id, current_user.id, "VIEWED")
     return success_response({"preview_url": url, "expires_in_seconds": 900})
+
+@router.get("/{file_id}/raw")
+async def get_file_raw(
+    file_id: str,
+    expires: int = Query(...),
+    sig: str = Query(...),
+    action: str = Query("download"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Serves file content for a signed URL minted by /download-url or
+    /preview-url. Deliberately has no auth dependency of its own — like a
+    real presigned URL, access control comes entirely from the HMAC
+    signature + expiry, not from the caller's session."""
+    svc = FileService(db)
+    if not await svc.verify_signed_url(file_id, expires, sig):
+        raise HTTPException(status_code=403, detail="Invalid or expired link.")
+
+    f = await svc.get_by_id(file_id)
+    if not f or f.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    file_path = os.path.join(UPLOAD_DIR, f.storage_key)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File content missing.")
+
+    return FileResponse(
+        file_path,
+        media_type=f.mime_type,
+        filename=f.original_name if action == "download" else None
+    )
 
 @router.get("/{file_id}/versions")
 async def get_file_versions(
@@ -173,6 +205,11 @@ async def get_file_versions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    svc = FileService(db)
+    f = await svc.get_by_id(file_id)
+    if not f or str(f.organization_id) != str(current_user.organization_id):
+        return error_response("NOT_FOUND", "File not found.", status_code=404)
+
     res = await db.execute(
         select(FileVersion).where(FileVersion.file_id == file_id).order_by(FileVersion.version_number.desc())
     )
@@ -223,6 +260,11 @@ async def get_file_activity(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    svc = FileService(db)
+    f = await svc.get_by_id(file_id)
+    if not f or str(f.organization_id) != str(current_user.organization_id):
+        return error_response("NOT_FOUND", "File not found.", status_code=404)
+
     res = await db.execute(
         select(FileActivity).where(FileActivity.file_id == file_id).order_by(FileActivity.created_at.desc())
     )

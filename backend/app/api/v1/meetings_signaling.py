@@ -7,7 +7,7 @@ from sqlalchemy.future import select
 
 from app.core.security import decode_token
 from app.core.database import AsyncSessionLocal
-from app.models.models import User, Meeting, MeetingParticipant
+from app.models.models import User, Meeting, MeetingParticipant, ParticipantStatus
 from app.services.sfu.mediasoup_service import sfu_service
 from app.core.redis import get_redis
 
@@ -65,6 +65,51 @@ async def meeting_signaling_websocket(
         return
 
     participant_id = str(user_id)
+
+    # Verify the meeting exists, belongs to the caller's org, and that they've
+    # actually been admitted (via POST /meetings/{id}/join, which enforces the
+    # host's lobby/waiting-room policy) before granting real SFU media access.
+    # Without this, anyone with a valid token could join any org's live call
+    # just by knowing its meeting_id, bypassing the waiting room entirely.
+    async with AsyncSessionLocal() as db:
+        m_res = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+        meeting = m_res.scalars().first()
+        if not meeting:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        u_res = await db.execute(select(User).where(User.id == user_id))
+        signaling_user = u_res.scalars().first()
+        if not signaling_user or str(signaling_user.organization_id) != str(meeting.organization_id):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        p_res = await db.execute(
+            select(MeetingParticipant).where(
+                MeetingParticipant.meeting_id == meeting_id,
+                MeetingParticipant.user_id == user_id
+            )
+        )
+        participant = p_res.scalars().first()
+
+    if not participant or participant.status == ParticipantStatus.REJECTED:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    if participant.status not in (ParticipantStatus.JOINED, ParticipantStatus.ADMITTED):
+        # Still in the lobby: accept just long enough to say so, grant no SFU
+        # access. The client should poll GET /meetings/{id}/state and retry
+        # the signaling connection once the host admits them.
+        await websocket.accept()
+        await websocket.send_json({
+            "event_id": uuid.uuid4().hex,
+            "type": "lobby.waiting",
+            "meeting_id": meeting_id,
+            "payload": {"message": "Waiting for the host to admit you."}
+        })
+        await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+        return
+
     await meeting_ws_manager.connect(meeting_id, participant_id, websocket)
 
     # Register in SFU

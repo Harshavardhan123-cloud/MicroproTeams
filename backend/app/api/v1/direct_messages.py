@@ -15,6 +15,17 @@ from app.core.websocket import ws_manager
 
 router = APIRouter(prefix="/direct-conversations", tags=["Direct Messaging"])
 
+
+async def _ensure_conversation_member(conversation_id: str, current_user: User, db: AsyncSession) -> None:
+    res = await db.execute(
+        select(DirectConversationMember).where(
+            DirectConversationMember.conversation_id == conversation_id,
+            DirectConversationMember.user_id == current_user.id
+        )
+    )
+    if not res.scalars().first():
+        raise HTTPException(status_code=403, detail="You are not a member of this conversation.")
+
 class CreateDMRequest(BaseModel):
     target_user_ids: List[str]
     title: Optional[str] = None
@@ -71,6 +82,16 @@ async def create_or_get_direct_conversation(
     db: AsyncSession = Depends(get_db)
 ):
     target_ids = list(set([str(current_user.id)] + [str(uid) for uid in req.target_user_ids]))
+
+    # All participants must belong to the caller's org, otherwise a DM "conversation"
+    # could be used to push messages to an arbitrary user id in another tenant.
+    valid_res = await db.execute(
+        select(User.id).where(User.id.in_(target_ids), User.organization_id == current_user.organization_id)
+    )
+    valid_ids = {str(uid) for uid in valid_res.scalars().all()}
+    if valid_ids != set(target_ids):
+        return error_response("INVALID_TARGET", "All participants must belong to your organization.", status_code=400)
+
     is_group = len(target_ids) > 2
 
     if not is_group and len(target_ids) == 2:
@@ -116,6 +137,7 @@ async def get_direct_messages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await _ensure_conversation_member(conversation_id, current_user, db)
     res = await db.execute(
         select(Message)
         .options(
@@ -137,6 +159,7 @@ async def send_direct_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await _ensure_conversation_member(conversation_id, current_user, db)
     msg = Message(
         sender_id=current_user.id,
         conversation_id=conversation_id,
@@ -230,6 +253,7 @@ async def clear_direct_conversation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await _ensure_conversation_member(conversation_id, current_user, db)
     await db.execute(delete(Message).where(Message.conversation_id == conversation_id))
     await db.commit()
 

@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.models import User, Meeting, MeetingParticipant, MeetingPolicy, MeetingType, MeetingStatus
 from app.services.meeting_service import MeetingService
+from app.services.authorization_service import AuthorizationService
 from app.core.response import success_response, error_response
 
 router = APIRouter(prefix="/meetings", tags=["Meetings"])
@@ -71,7 +72,7 @@ async def get_meeting_by_code(
 ):
     svc = MeetingService(db)
     m = await svc.get_by_code(meeting_code)
-    if not m:
+    if not m or str(m.organization_id) != str(current_user.organization_id):
         return error_response("NOT_FOUND", "Meeting not found.", status_code=404)
     return success_response(svc.format_meeting(m, m.policy))
 
@@ -83,7 +84,7 @@ async def get_meeting_details(
 ):
     svc = MeetingService(db)
     m = await svc.get_by_id(meeting_id)
-    if not m:
+    if not m or str(m.organization_id) != str(current_user.organization_id):
         return error_response("NOT_FOUND", "Meeting not found.", status_code=404)
     return success_response(svc.format_meeting(m, m.policy))
 
@@ -128,6 +129,11 @@ async def list_participants(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    svc = MeetingService(db)
+    m = await svc.get_by_id(meeting_id)
+    if not m or str(m.organization_id) != str(current_user.organization_id):
+        return error_response("NOT_FOUND", "Meeting not found.", status_code=404)
+
     res = await db.execute(
         select(MeetingParticipant).where(MeetingParticipant.meeting_id == meeting_id)
     )
@@ -194,6 +200,11 @@ async def get_meeting_policy(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    svc = MeetingService(db)
+    m = await svc.get_by_id(meeting_id)
+    if not m or str(m.organization_id) != str(current_user.organization_id):
+        return error_response("NOT_FOUND", "Meeting not found.", status_code=404)
+
     res = await db.execute(select(MeetingPolicy).where(MeetingPolicy.meeting_id == meeting_id))
     pol = res.scalars().first()
     if not pol:
@@ -214,6 +225,15 @@ async def update_meeting_policy(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    svc = MeetingService(db)
+    m = await svc.get_by_id(meeting_id)
+    if not m or str(m.organization_id) != str(current_user.organization_id):
+        return error_response("NOT_FOUND", "Meeting not found.", status_code=404)
+
+    is_host = str(m.host_id) == str(current_user.id)
+    if not is_host and not await AuthorizationService.is_org_admin(current_user, db):
+        return error_response("FORBIDDEN", "Only the meeting host or an org admin can update its policy.", status_code=403)
+
     res = await db.execute(select(MeetingPolicy).where(MeetingPolicy.meeting_id == meeting_id))
     pol = res.scalars().first()
     if not pol:
@@ -251,7 +271,7 @@ async def get_meeting_state(
     if not m:
         # Fallback search by code
         m = await svc.get_by_code(meeting_id)
-    if not m:
+    if not m or str(m.organization_id) != str(current_user.organization_id):
         return error_response("NOT_FOUND", "Meeting not found.", status_code=404)
 
     # Verify participant membership or active state

@@ -157,6 +157,7 @@ class Organization(Base):
     id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     slug = Column(String(255), unique=True, nullable=False, index=True)
+    domain = Column(String(255), nullable=True, index=True)
     logo_url = Column(String(512), nullable=True)
     description = Column(Text, nullable=True)
     owner_id = Column(GUID(), nullable=True)

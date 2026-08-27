@@ -7,9 +7,11 @@ from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models.models import User, Meeting, MeetingParticipant, MeetingStatus
+from app.models.models import User, Meeting, MeetingParticipant, MeetingPolicy, MeetingStatus, ParticipantRole
 from app.api.deps import get_current_user
-from app.core.response import success_response
+from app.services.meeting_service import generate_meeting_code
+from app.services.authorization_service import AuthorizationService
+from app.core.response import success_response, error_response
 
 router = APIRouter(prefix="/calendar", tags=["Calendar & Scheduling"])
 
@@ -79,9 +81,9 @@ async def schedule_meeting(
         start_dt = datetime.fromisoformat(req.scheduled_start.replace('Z', '+00:00'))
         end_dt = datetime.fromisoformat(req.scheduled_end.replace('Z', '+00:00'))
     except Exception:
-        start_dt = datetime.utcnow()
-        end_dt = datetime.utcnow()
+        return error_response("INVALID_DATE", "scheduled_start/scheduled_end must be valid ISO-8601 timestamps.", status_code=400)
 
+    code = generate_meeting_code()
     meeting = Meeting(
         organization_id=current_user.organization_id,
         channel_id=req.channel_id,
@@ -92,24 +94,34 @@ async def schedule_meeting(
         is_scheduled=True,
         scheduled_start=start_dt,
         scheduled_end=end_dt,
-        meeting_link=f"/meeting/room"
+        meeting_code=code,
+        meeting_link=f"/meet/{code}"
     )
     db.add(meeting)
     await db.commit()
     await db.refresh(meeting)
 
-    # Add host as participant
-    host_part = MeetingParticipant(meeting_id=meeting.id, user_id=current_user.id, role="host")
+    # Add host as participant, using the same role values (and MeetingPolicy
+    # row) that the real join/policy flow expects — a scheduled meeting used
+    # to be unjoinable/unmanageable through that flow because of a mismatch.
+    host_part = MeetingParticipant(meeting_id=meeting.id, user_id=current_user.id, role=ParticipantRole.HOST, is_host=True)
     db.add(host_part)
+    db.add(MeetingPolicy(meeting_id=meeting.id))
 
-    # Add optional attendees
+    # Add optional attendees — restricted to the caller's own org, same as a
+    # direct-message conversation's members.
     if req.attendee_ids:
-        for att_id in set(req.attendee_ids):
-            if att_id != str(current_user.id):
-                db.add(MeetingParticipant(meeting_id=meeting.id, user_id=att_id, role="attendee"))
+        candidate_ids = {aid for aid in set(req.attendee_ids) if aid != str(current_user.id)}
+        if candidate_ids:
+            valid_res = await db.execute(
+                select(User.id).where(User.id.in_(candidate_ids), User.organization_id == current_user.organization_id)
+            )
+            valid_ids = {str(uid) for uid in valid_res.scalars().all()}
+            for att_id in valid_ids:
+                db.add(MeetingParticipant(meeting_id=meeting.id, user_id=att_id, role=ParticipantRole.ATTENDEE))
 
     await db.commit()
-    return success_response({"id": str(meeting.id), "title": meeting.title}, status_code=201)
+    return success_response({"id": str(meeting.id), "title": meeting.title, "meeting_code": meeting.meeting_code}, status_code=201)
 
 @router.delete("/events/{meeting_id}")
 async def cancel_meeting(
@@ -119,8 +131,12 @@ async def cancel_meeting(
 ):
     res = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
     meeting = res.scalars().first()
-    if not meeting:
+    if not meeting or str(meeting.organization_id) != str(current_user.organization_id):
         raise HTTPException(status_code=404, detail="Meeting not found")
+
+    is_host = str(meeting.host_id) == str(current_user.id)
+    if not is_host and not await AuthorizationService.is_org_admin(current_user, db):
+        raise HTTPException(status_code=403, detail="Only the meeting host or an org admin can cancel this meeting.")
 
     await db.delete(meeting)
     await db.commit()

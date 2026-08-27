@@ -6,11 +6,17 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.main import app
 from app.core.database import Base, get_db
+from app.core.limiter import limiter
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 @pytest_asyncio.fixture
 async def async_client() -> AsyncGenerator[AsyncClient, None]:
+    # The login/register rate limiter is keyed by client IP, which is constant
+    # across the test client — without a reset, tests would trip each other's
+    # limits since slowapi's counters persist for the whole pytest process.
+    limiter.reset()
+
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async_session = async_sessionmaker(engine, expire_on_commit=False)
 

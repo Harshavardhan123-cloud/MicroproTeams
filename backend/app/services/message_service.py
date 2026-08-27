@@ -2,13 +2,34 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.repositories.message_repository import MessageRepository
-from app.models.models import Message, MessageType, PinnedMessage, Notification, User
+from app.models.models import Message, MessageType, PinnedMessage, Notification, User, DirectConversationMember
 from app.core.websocket import ws_manager
+from app.services.authorization_service import AuthorizationService
+
+class MessageAccessError(Exception):
+    """Raised when a user has no access to a message's channel/conversation."""
 
 class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = MessageRepository(db)
+
+    async def _ensure_can_access_message(self, msg: Message, current_user: User) -> None:
+        if msg.channel_id:
+            allowed = await AuthorizationService.can_access_channel(current_user, str(msg.channel_id), self.db)
+        elif msg.conversation_id:
+            res = await self.db.execute(
+                select(DirectConversationMember).where(
+                    DirectConversationMember.conversation_id == msg.conversation_id,
+                    DirectConversationMember.user_id == current_user.id
+                )
+            )
+            allowed = res.scalars().first() is not None
+        else:
+            allowed = False
+
+        if not allowed:
+            raise MessageAccessError("You do not have access to this message.")
 
     def format_message(self, m: Message) -> dict:
         sender_obj = m.__dict__.get("sender")
@@ -50,7 +71,11 @@ class MessageService:
         messages = await self.repo.get_channel_messages(channel_id, limit)
         return [self.format_message(m) for m in messages]
 
-    async def get_replies(self, parent_id: str) -> List[dict]:
+    async def get_replies(self, parent_id: str, current_user: User) -> List[dict]:
+        parent = await self.repo.get_by_id(parent_id)
+        if not parent:
+            return []
+        await self._ensure_can_access_message(parent, current_user)
         replies = await self.repo.get_replies(parent_id)
         return [self.format_message(m) for m in replies]
 
@@ -98,10 +123,11 @@ class MessageService:
 
         return formatted
 
-    async def update_message(self, message_id: str, sender_id: str, content: str) -> Optional[dict]:
+    async def update_message(self, message_id: str, current_user: User, content: str) -> Optional[dict]:
         msg = await self.repo.get_by_id(message_id)
-        if not msg or str(msg.sender_id) != str(sender_id):
+        if not msg or str(msg.sender_id) != str(current_user.id):
             return None
+        await self._ensure_can_access_message(msg, current_user)
 
         msg.content = content
         msg.is_edited = True
@@ -116,10 +142,11 @@ class MessageService:
 
         return formatted
 
-    async def delete_message(self, message_id: str, sender_id: str) -> bool:
+    async def delete_message(self, message_id: str, current_user: User) -> bool:
         msg = await self.repo.get_by_id(message_id)
-        if not msg or str(msg.sender_id) != str(sender_id):
+        if not msg or str(msg.sender_id) != str(current_user.id):
             return False
+        await self._ensure_can_access_message(msg, current_user)
 
         channel_id = str(msg.channel_id) if msg.channel_id else None
         await self.repo.delete(msg)
@@ -132,10 +159,12 @@ class MessageService:
 
         return True
 
-    async def toggle_reaction(self, message_id: str, user_id: str, emoji: str) -> Optional[dict]:
+    async def toggle_reaction(self, message_id: str, current_user: User, emoji: str) -> Optional[dict]:
         msg = await self.repo.get_by_id(message_id)
         if not msg:
             return None
+        await self._ensure_can_access_message(msg, current_user)
+        user_id = str(current_user.id)
 
         added = await self.repo.toggle_reaction(message_id, user_id, emoji)
         updated_msg = await self.repo.get_by_id(message_id)
@@ -152,16 +181,17 @@ class MessageService:
 
         return formatted
 
-    async def pin_message(self, message_id: str, user_id: str) -> Optional[dict]:
+    async def pin_message(self, message_id: str, current_user: User) -> Optional[dict]:
         msg = await self.repo.get_by_id(message_id)
         if not msg:
             return None
+        await self._ensure_can_access_message(msg, current_user)
 
         msg.is_pinned = True
         await self.db.commit()
 
         pin_target = str(msg.channel_id) if msg.channel_id else str(msg.conversation_id or message_id)
-        pinned = PinnedMessage(conversation_id=pin_target, message_id=msg.id, pinned_by=user_id)
+        pinned = PinnedMessage(conversation_id=pin_target, message_id=msg.id, pinned_by=current_user.id)
         self.db.add(pinned)
         await self.db.commit()
 
@@ -174,10 +204,11 @@ class MessageService:
 
         return formatted
 
-    async def unpin_message(self, message_id: str, user_id: str) -> Optional[dict]:
+    async def unpin_message(self, message_id: str, current_user: User) -> Optional[dict]:
         msg = await self.repo.get_by_id(message_id)
         if not msg:
             return None
+        await self._ensure_can_access_message(msg, current_user)
 
         msg.is_pinned = False
         await self.db.commit()
