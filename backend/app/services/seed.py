@@ -6,6 +6,7 @@ from app.models.models import (
     Organization, User, Role, Permission, OrganizationMember, Team, TeamMember, Channel, Message,
     PresenceStatus, TeamPrivacy, ChannelType, MemberRole, MessageType
 )
+from app.models.notification import Notification
 
 async def seed_data():
     await init_db()
@@ -132,6 +133,37 @@ async def seed_data():
                         created_by=created_users["admin"].id
                     )
                     db.add(ch)
+
+        # 5. Seed Initial Notifications for Users
+        for username, user_obj in created_users.items():
+            n_res = await db.execute(select(Notification).where(Notification.user_id == user_obj.id))
+            if not n_res.scalars().first():
+                db.add_all([
+                    Notification(
+                        user_id=user_obj.id,
+                        type="MESSAGE",
+                        priority="NORMAL",
+                        title="Ethan Hunt sent you a direct message",
+                        body="Hey, let's review the security policy updates before the afternoon release.",
+                        status="UNREAD"
+                    ),
+                    Notification(
+                        user_id=user_obj.id,
+                        type="MEETING",
+                        priority="HIGH",
+                        title="Upcoming Standup Meeting in Engineering channel",
+                        body="Daily Engineering & Architecture Standup begins in 15 minutes.",
+                        status="UNREAD"
+                    ),
+                    Notification(
+                        user_id=user_obj.id,
+                        type="SYSTEM",
+                        priority="NORMAL",
+                        title="Admin Alex Vance updated workspace policies",
+                        body="Data governance & retention policies updated for Acme Corp organization.",
+                        status="UNREAD"
+                    )
+                ])
 
         await db.commit()
         print("✅ Seeding completed successfully.")

@@ -1,3 +1,6 @@
+import { getToken } from '../utils/token';
+import { getTargetHostUrl } from '../api/client';
+
 type EventListener = (data: any) => void;
 
 class WebSocketService {
@@ -20,17 +23,21 @@ class WebSocketService {
     }
 
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      if (channelId && this.socket.readyState === WebSocket.OPEN) {
+        this.send({ type: 'join_channel', channel_id: channelId });
+      }
       return;
     }
 
-    const token = localStorage.getItem('access_token');
+    const token = getToken();
     if (!token || token === 'undefined' || token === 'null') return;
 
     this.isConnecting = true;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const port = window.location.port || (protocol === 'wss:' ? '443' : '80');
-    let url = `${protocol}//${host}:${port}/api/v1/ws?token=${encodeURIComponent(token)}`;
+
+    const targetHost = getTargetHostUrl();
+    const wsBase = targetHost.replace(/^http/, 'ws');
+    let url = `${wsBase}/api/v1/ws?token=${encodeURIComponent(token)}`;
+
     if (this.activeChannelId) {
       url += `&channel_id=${encodeURIComponent(this.activeChannelId)}`;
     }
@@ -58,6 +65,11 @@ class WebSocketService {
       this.socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          if (data.type === 'connection_established' && data.session_id) {
+            import('../stores/callStore').then(({ useCallStore }) => {
+              useCallStore.getState().setSessionId(data.session_id);
+            });
+          }
           this.listeners.forEach((listener) => {
             try {
               listener(data);
@@ -88,10 +100,32 @@ class WebSocketService {
 
       this.socket.onerror = (err) => {
         console.error('WebSocket error:', err);
+        this.isConnecting = false;
       };
     } catch (err) {
       console.error('Failed to initialize WebSocket:', err);
       this.isConnecting = false;
+      this.socket = null;
+    }
+  }
+
+  joinChannel(channelId: string) {
+    if (!channelId) return;
+    this.activeChannelId = channelId;
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.send({ type: 'join_channel', channel_id: channelId });
+    } else {
+      this.connect(channelId);
+    }
+  }
+
+  leaveChannel(channelId: string) {
+    if (!channelId) return;
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.send({ type: 'leave_channel', channel_id: channelId });
+    }
+    if (this.activeChannelId === channelId) {
+      this.activeChannelId = null;
     }
   }
 
@@ -118,6 +152,7 @@ class WebSocketService {
       this.pingInterval = null;
     }
     this.activeChannelId = null;
+    this.isConnecting = false;
   }
 }
 

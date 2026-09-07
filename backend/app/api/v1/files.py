@@ -19,7 +19,7 @@ class RenameFileRequest(BaseModel):
 
 @router.post("/upload")
 async def upload_file(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

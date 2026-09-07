@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Text, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Table, UniqueConstraint, Index, Integer
+    Column, String, Text, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Table, UniqueConstraint, Index, Integer, LargeBinary
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.types import TypeDecorator, CHAR
@@ -124,7 +124,10 @@ class CallStatus(str, enum.Enum):
     RINGING = "RINGING"
     CONNECTING = "CONNECTING"
     CONNECTED = "CONNECTED"
+    ACCEPTED = "ACCEPTED"
     DECLINED = "DECLINED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
     MISSED = "MISSED"
     FAILED = "FAILED"
     ENDED = "ENDED"
@@ -142,6 +145,55 @@ class FileVisibility(str, enum.Enum):
     CHANNEL = "CHANNEL"
     TEAM = "TEAM"
     ORGANIZATION = "ORGANIZATION"
+
+class RecordingType(str, enum.Enum):
+    AUDIO_ONLY = "AUDIO_ONLY"
+    VIDEO = "VIDEO"
+    SCREEN = "SCREEN"
+    FULL_MEETING = "FULL_MEETING"
+
+class RecordingStatus(str, enum.Enum):
+    STARTING = "STARTING"
+    RECORDING = "RECORDING"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+    DELETED = "DELETED"
+
+class RecordingSegmentStatus(str, enum.Enum):
+    RECORDING = "RECORDING"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+class TranscriptStatus(str, enum.Enum):
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+class ActionItemStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+class RetentionResourceType(str, enum.Enum):
+    MESSAGES = "MESSAGES"
+    FILES = "FILES"
+    MEETINGS = "MEETINGS"
+    RECORDINGS = "RECORDINGS"
+    TRANSCRIPTS = "TRANSCRIPTS"
+
+class RetentionAction(str, enum.Enum):
+    DELETE = "DELETE"
+    ARCHIVE = "ARCHIVE"
+
+class ExportJobStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+
 
 # Association table for Roles and Permissions
 role_permissions = Table(
@@ -248,6 +300,28 @@ class UserSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     user = relationship("User", back_populates="sessions")
+
+class PasswordResetToken(Base):
+    __tablename__ = 'password_reset_tokens'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    token_hash = Column(String(255), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class EmailOTP(Base):
+    __tablename__ = 'email_otps'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), nullable=False, index=True)
+    otp_code = Column(String(10), nullable=False)
+    purpose = Column(String(50), nullable=False, index=True)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
 
 class Team(Base):
     __tablename__ = 'teams'
@@ -390,6 +464,8 @@ class Message(Base):
     
     is_edited = Column(Boolean, default=False, nullable=False)
     is_pinned = Column(Boolean, default=False, nullable=False)
+    is_read = Column(Boolean, default=False, nullable=False)
+    read_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -411,6 +487,11 @@ class MessageAttachment(Base):
     message_id = Column(GUID(), ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, index=True)
     file_id = Column(GUID(), nullable=True)
     display_name = Column(String(255), nullable=False)
+    file_url = Column(String(512), nullable=True)
+    mime_type = Column(String(100), nullable=True)
+    size = Column(Integer, nullable=True)
+    file_data = Column(LargeBinary, nullable=True)
+    base64_data = Column(Text, nullable=True)
     sort_order = Column(String(50), default="0", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -427,6 +508,16 @@ class MessageMention(Base):
 
     message = relationship("Message", back_populates="mentions")
     user = relationship("User")
+
+class UserMessageDeletion(Base):
+    __tablename__ = 'user_message_deletions'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    message_id = Column(GUID(), ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint('user_id', 'message_id', name='_user_msg_del_uc'),)
 
 class PinnedMessage(Base):
     __tablename__ = 'pinned_messages'
@@ -453,20 +544,6 @@ class MessageReaction(Base):
     message = relationship("Message", back_populates="reactions")
     user = relationship("User")
 
-class Notification(Base):
-    __tablename__ = 'notifications'
-
-    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
-    user_id = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
-    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
-    type = Column(String(100), nullable=False)
-    title = Column(String(255), nullable=False)
-    body = Column(Text, nullable=False)
-    resource_type = Column(String(100), nullable=True)
-    resource_id = Column(String(255), nullable=True)
-    is_read = Column(Boolean, default=False, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    read_at = Column(DateTime, nullable=True)
 
 class FileRecord(Base):
     __tablename__ = 'file_records'
@@ -482,6 +559,8 @@ class FileRecord(Base):
     size = Column(Integer, default=0, nullable=False)
     storage_provider = Column(String(50), default="local", nullable=False)
     storage_key = Column(String(512), nullable=False)
+    file_data = Column(LargeBinary, nullable=True)
+    base64_data = Column(Text, nullable=True)
     checksum = Column(String(128), nullable=True)
     status = Column(SQLEnum(FileStatus), default=FileStatus.READY, nullable=False)
     visibility = Column(SQLEnum(FileVisibility), default=FileVisibility.ORGANIZATION, nullable=False)
@@ -658,6 +737,8 @@ class CallHistory(Base):
     callee_id = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     call_type = Column(SQLEnum(CallType), default=CallType.VIDEO, nullable=False)
     status = Column(SQLEnum(CallStatus), default=CallStatus.ENDED, nullable=False, index=True)
+    accepted_by_session_id = Column(String(255), nullable=True)
+    accepted_at = Column(DateTime, nullable=True)
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     connected_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
@@ -673,10 +754,200 @@ class AuditLog(Base):
 
     id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
-    user_id = Column(GUID(), nullable=True)
+    user_id = Column(GUID(), nullable=True, index=True)
+    actor_id = Column(GUID(), nullable=True, index=True)
     action = Column(String(255), nullable=False)
     resource_type = Column(String(100), nullable=False)
     resource_id = Column(String(255), nullable=True)
     ip_address = Column(String(50), nullable=True)
+    user_agent = Column(String(512), nullable=True)
     details = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+class Recording(Base):
+    __tablename__ = 'recordings'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(GUID(), ForeignKey('meetings.id', ondelete='CASCADE'), nullable=False, index=True)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    started_by = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    recording_type = Column(SQLEnum(RecordingType), default=RecordingType.FULL_MEETING, nullable=False)
+    status = Column(SQLEnum(RecordingStatus), default=RecordingStatus.STARTING, nullable=False)
+    storage_key = Column(String(512), nullable=True)
+    mime_type = Column(String(100), default="video/mp4", nullable=False)
+    duration = Column(Integer, default=0, nullable=False)
+    size = Column(Integer, default=0, nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    meeting = relationship("Meeting")
+    starter = relationship("User")
+    segments = relationship("RecordingSegment", back_populates="recording", cascade="all, delete-orphan")
+
+class RecordingSegment(Base):
+    __tablename__ = 'recording_segments'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    recording_id = Column(GUID(), ForeignKey('recordings.id', ondelete='CASCADE'), nullable=False, index=True)
+    sequence_number = Column(Integer, nullable=False)
+    storage_key = Column(String(512), nullable=False)
+    duration = Column(Integer, default=0, nullable=False)
+    size = Column(Integer, default=0, nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    status = Column(SQLEnum(RecordingSegmentStatus), default=RecordingSegmentStatus.READY, nullable=False)
+
+    recording = relationship("Recording", back_populates="segments")
+
+class Transcript(Base):
+    __tablename__ = 'transcripts'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(GUID(), ForeignKey('meetings.id', ondelete='CASCADE'), nullable=False, index=True)
+    recording_id = Column(GUID(), ForeignKey('recordings.id', ondelete='CASCADE'), nullable=True, index=True)
+    language = Column(String(20), default="en", nullable=False)
+    status = Column(SQLEnum(TranscriptStatus), default=TranscriptStatus.READY, nullable=False)
+    full_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    meeting = relationship("Meeting")
+    recording = relationship("Recording")
+    segments = relationship("TranscriptSegment", back_populates="transcript", cascade="all, delete-orphan")
+
+class TranscriptSegment(Base):
+    __tablename__ = 'transcript_segments'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    transcript_id = Column(GUID(), ForeignKey('transcripts.id', ondelete='CASCADE'), nullable=False, index=True)
+    speaker_id = Column(GUID(), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    speaker_name = Column(String(100), nullable=False)
+    start_time = Column(Integer, nullable=False, index=True) # Seconds
+    end_time = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+    confidence = Column(Integer, default=95, nullable=False)
+    word_timestamps = Column(Text, nullable=True) # JSON representation of word timings
+
+    transcript = relationship("Transcript", back_populates="segments")
+    speaker = relationship("User")
+
+class MeetingSummary(Base):
+    __tablename__ = 'meeting_summaries'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(GUID(), ForeignKey('meetings.id', ondelete='CASCADE'), nullable=False, unique=True, index=True)
+    recording_id = Column(GUID(), ForeignKey('recordings.id', ondelete='SET NULL'), nullable=True)
+    summary = Column(Text, nullable=False)
+    key_points = Column(Text, nullable=True) # JSON list
+    decisions = Column(Text, nullable=True) # JSON list
+    action_items = Column(Text, nullable=True) # JSON list
+    questions = Column(Text, nullable=True) # JSON list
+    topics = Column(Text, nullable=True) # JSON list
+    risks = Column(Text, nullable=True) # JSON list
+    model = Column(String(100), default="gpt-4o-mini", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    meeting = relationship("Meeting")
+
+class MeetingActionItem(Base):
+    __tablename__ = 'meeting_action_items'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(GUID(), ForeignKey('meetings.id', ondelete='CASCADE'), nullable=False, index=True)
+    description = Column(Text, nullable=False)
+    assignee_id = Column(GUID(), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    due_date = Column(String(100), nullable=True)
+    priority = Column(String(50), default="MEDIUM", nullable=False)
+    status = Column(SQLEnum(ActionItemStatus), default=ActionItemStatus.OPEN, nullable=False)
+    source_segment_id = Column(GUID(), ForeignKey('transcript_segments.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    meeting = relationship("Meeting")
+    assignee = relationship("User")
+
+class RetentionPolicy(Base):
+    __tablename__ = 'retention_policies'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    resource_type = Column(SQLEnum(RetentionResourceType), nullable=False)
+    retention_days = Column(Integer, default=365, nullable=False)
+    action = Column(SQLEnum(RetentionAction), default=RetentionAction.DELETE, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+class LegalHold(Base):
+    __tablename__ = 'legal_holds'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    resource_type = Column(String(50), nullable=False)
+    resource_id = Column(String(255), nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    created_by = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    released_at = Column(DateTime, nullable=True)
+
+class OrganizationPolicy(Base):
+    __tablename__ = 'organization_policies'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, unique=True, index=True)
+    allow_external_users = Column(Boolean, default=True, nullable=False)
+    allow_guest_access = Column(Boolean, default=True, nullable=False)
+    allow_file_sharing = Column(Boolean, default=True, nullable=False)
+    allow_external_file_links = Column(Boolean, default=True, nullable=False)
+    allow_recording = Column(Boolean, default=True, nullable=False)
+    allow_transcription = Column(Boolean, default=True, nullable=False)
+    allow_ai_features = Column(Boolean, default=True, nullable=False)
+    max_file_size = Column(Integer, default=104857600, nullable=False) # 100MB
+    max_meeting_participants = Column(Integer, default=250, nullable=False)
+    retention_days = Column(Integer, default=365, nullable=False)
+    max_ai_minutes_per_month = Column(Integer, default=10000, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+class ExportJob(Base):
+    __tablename__ = 'export_jobs'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    requested_by = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    resource_type = Column(String(50), default="ALL", nullable=False)
+    status = Column(SQLEnum(ExportJobStatus), default=ExportJobStatus.QUEUED, nullable=False)
+    storage_key = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+class DailyAnalyticsAggregate(Base):
+    __tablename__ = 'daily_analytics_aggregates'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    date = Column(String(10), nullable=False, index=True) # YYYY-MM-DD
+    daily_active_users = Column(Integer, default=0, nullable=False)
+    daily_messages = Column(Integer, default=0, nullable=False)
+    daily_meetings = Column(Integer, default=0, nullable=False)
+    daily_meeting_minutes = Column(Integer, default=0, nullable=False)
+    daily_file_uploads = Column(Integer, default=0, nullable=False)
+    daily_storage_usage = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class BackgroundJob(Base):
+    __tablename__ = 'background_jobs'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    type = Column(String(100), nullable=False, index=True)
+    status = Column(String(50), default="QUEUED", nullable=False, index=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    error = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+

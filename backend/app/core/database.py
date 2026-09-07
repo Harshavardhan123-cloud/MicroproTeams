@@ -22,13 +22,26 @@ def is_db_reachable(db_url: str) -> bool:
     except Exception:
         return False
 
-# Determine final Database URL: PostgreSQL if online, else SQLite fallback
-if is_db_reachable(settings.DATABASE_URL):
-    effective_db_url = settings.DATABASE_URL
+# Determine final Database URL: PostgreSQL if online & authenticated, else SQLite fallback
+db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "teams_local.db")
+sqlite_url = f"sqlite+aiosqlite:///{db_path}"
+
+if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
+    try:
+        import asyncio
+        import asyncpg
+        clean_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+        async def _check_pg():
+            conn = await asyncpg.connect(clean_url, timeout=2)
+            await conn.close()
+            return True
+        asyncio.run(_check_pg())
+        effective_db_url = settings.DATABASE_URL
+    except Exception as e:
+        effective_db_url = sqlite_url
+        print(f"ℹ️ PostgreSQL connection check failed ({e}). Falling back to embedded database: {effective_db_url}")
 else:
-    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "teams_local.db")
-    effective_db_url = f"sqlite+aiosqlite:///{db_path}"
-    print(f"ℹ️ PostgreSQL server offline/unreachable. Falling back to embedded database: {effective_db_url}")
+    effective_db_url = sqlite_url
 
 engine = create_async_engine(
     effective_db_url,
@@ -44,6 +57,9 @@ AsyncSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False
 )
+
+async_session_factory = AsyncSessionLocal
+
 
 Base = declarative_base()
 
@@ -69,9 +85,30 @@ def sync_db_schema_sync(sync_conn):
         print(f"Schema sync note: {e}")
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(sync_db_schema_sync)
+    global engine, AsyncSessionLocal, async_session_factory, effective_db_url
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(sync_db_schema_sync)
+    except Exception as e:
+        if "postgresql" in effective_db_url:
+            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "teams_local.db")
+            effective_db_url = f"sqlite+aiosqlite:///{db_path}"
+            print(f"ℹ️ PostgreSQL server offline/unreachable ({e}). Falling back to embedded database: {effective_db_url}")
+            await engine.dispose()
+            engine = create_async_engine(
+                effective_db_url,
+                echo=False,
+                future=True,
+                pool_pre_ping=True
+            )
+            AsyncSessionLocal.configure(bind=engine)
+            async_session_factory = AsyncSessionLocal
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(sync_db_schema_sync)
+        else:
+            raise
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:

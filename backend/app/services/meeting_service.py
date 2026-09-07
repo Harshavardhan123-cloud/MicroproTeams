@@ -7,9 +7,11 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.models.models import (
-    Meeting, MeetingParticipant, MeetingPolicy, CallHistory, User, Notification,
+    Meeting, MeetingParticipant, MeetingPolicy, CallHistory, User,
     MeetingType, MeetingStatus, ParticipantRole, ParticipantStatus, CallType, CallStatus
 )
+from app.models.notification import Notification
+from app.core.websocket import ws_manager
 
 def generate_meeting_code() -> str:
     """Generate secure non-sequential meeting code e.g. meet-a1b2-c3d4."""
@@ -277,18 +279,26 @@ class MeetingService:
 
         # Create persistent notification for callee
         notif = Notification(
-            organization_id=caller.organization_id,
-            user_id=callee_id,
-            type="incoming_call",
+            id=uuid.uuid4(),
+            user_id=uuid.UUID(str(callee_id)),
+            type="CALL",
+            priority="HIGH",
             title=f"Incoming {call_type.value.capitalize()} Call",
             body=f"{caller.display_name} is calling you.",
-            resource_type="call",
-            resource_id=m_dict["id"]
+            meeting_id=m_dict["id"],
+            call_id=str(call.id),
+            status="UNREAD"
         )
         self.db.add(notif)
 
         await self.db.commit()
         await self.db.refresh(call)
+
+        # Broadcast real-time notification to callee over WebSocket
+        await ws_manager.send_personal_message(str(callee_id), {
+            "type": "notification.new",
+            "notification": notif.to_dict()
+        })
 
         return {
             "call_id": str(call.id),
@@ -298,3 +308,125 @@ class MeetingService:
             "caller_id": str(caller.id),
             "callee_id": str(callee_id)
         }
+
+    async def accept_call(self, call_id: str, accepting_user: User, session_id: Optional[str] = None) -> dict:
+        from sqlalchemy import update
+        sess_id = session_id or "unknown_session"
+        
+        # Atomic DB state transition: only succeeds if call is still CALLING or RINGING
+        stmt = (
+            update(CallHistory)
+            .where(
+                CallHistory.id == call_id,
+                CallHistory.status.in_([CallStatus.CALLING, CallStatus.RINGING])
+            )
+            .values(
+                status=CallStatus.ACCEPTED,
+                accepted_by_session_id=sess_id,
+                accepted_at=datetime.utcnow(),
+                connected_at=datetime.utcnow()
+            )
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+
+        # Fetch call details
+        call_res = await self.db.execute(select(CallHistory).where(CallHistory.id == call_id))
+        call = call_res.scalars().first()
+
+        if res.rowcount > 0:
+            if call:
+                payload = {
+                    "type": "call_accepted",
+                    "call_id": str(call.id),
+                    "meeting_id": str(call.meeting_id) if call.meeting_id else None,
+                    "caller_id": str(call.caller_id),
+                    "callee_id": str(call.callee_id),
+                    "accepted_by_session_id": sess_id,
+                    "accepted_by_user_id": str(accepting_user.id)
+                }
+                # Broadcast state transition to caller and all recipient sessions
+                await ws_manager.send_personal_message(str(call.caller_id), payload)
+                await ws_manager.send_personal_message(str(call.callee_id), payload)
+
+            return {
+                "success": True,
+                "code": "ACCEPTED",
+                "message": "Call accepted successfully",
+                "session_id": sess_id
+            }
+        else:
+            # Check current state if update affected 0 rows
+            current_status = call.status if call else "UNKNOWN"
+            if current_status == CallStatus.ACCEPTED:
+                return {
+                    "success": False,
+                    "code": "CALL_ALREADY_ACCEPTED",
+                    "message": "Call has already been accepted on another session",
+                    "accepted_by_session_id": call.accepted_by_session_id if call else None
+                }
+            return {
+                "success": False,
+                "code": f"CALL_{current_status.value if hasattr(current_status, 'value') else current_status}",
+                "message": f"Call is no longer active (status: {current_status})"
+            }
+
+    async def decline_call(self, call_id: str, declining_user: User, session_id: Optional[str] = None) -> dict:
+        from sqlalchemy import update
+        sess_id = session_id or "unknown_session"
+        stmt = (
+            update(CallHistory)
+            .where(
+                CallHistory.id == call_id,
+                CallHistory.status.in_([CallStatus.CALLING, CallStatus.RINGING])
+            )
+            .values(status=CallStatus.DECLINED, ended_at=datetime.utcnow())
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+
+        call_res = await self.db.execute(select(CallHistory).where(CallHistory.id == call_id))
+        call = call_res.scalars().first()
+        if call:
+            payload = {
+                "type": "call_declined",
+                "call_id": str(call.id),
+                "caller_id": str(call.caller_id),
+                "callee_id": str(call.callee_id),
+                "declined_by_session_id": sess_id,
+                "declined_by_user_id": str(declining_user.id)
+            }
+            await ws_manager.send_personal_message(str(call.caller_id), payload)
+            await ws_manager.send_personal_message(str(call.callee_id), payload)
+
+        return {"success": True, "code": "DECLINED"}
+
+    async def cancel_call(self, call_id: str, caller_user: User, session_id: Optional[str] = None) -> dict:
+        from sqlalchemy import update
+        sess_id = session_id or "unknown_session"
+        stmt = (
+            update(CallHistory)
+            .where(
+                CallHistory.id == call_id,
+                CallHistory.status.in_([CallStatus.CALLING, CallStatus.RINGING])
+            )
+            .values(status=CallStatus.CANCELLED, ended_at=datetime.utcnow())
+        )
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+
+        call_res = await self.db.execute(select(CallHistory).where(CallHistory.id == call_id))
+        call = call_res.scalars().first()
+        if call:
+            payload = {
+                "type": "call_cancelled",
+                "call_id": str(call.id),
+                "caller_id": str(call.caller_id),
+                "callee_id": str(call.callee_id),
+                "cancelled_by_session_id": sess_id
+            }
+            await ws_manager.send_personal_message(str(call.caller_id), payload)
+            await ws_manager.send_personal_message(str(call.callee_id), payload)
+
+        return {"success": True, "code": "CANCELLED"}
+

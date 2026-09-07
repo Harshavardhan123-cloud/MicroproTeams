@@ -1,0 +1,596 @@
+% ============================================================
+% Micropro_Commute -- QA Test Plan & Functional Specification
+% Compiler: pdfLaTeX (two passes recommended)
+% ============================================================
+\documentclass[11pt,a4paper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[top=1.2in,bottom=1in,left=1in,right=1in,headheight=16pt]{geometry}
+\usepackage{hyperref}
+\usepackage{xurl}
+\urlstyle{tt}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage{array}
+\usepackage{fancyhdr}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage[most]{tcolorbox}
+\usepackage{parskip}
+
+% ---- COLORS ------------------------------------------------
+\definecolor{navy}{RGB}{18,40,100}
+\definecolor{blue}{RGB}{30,80,180}
+\definecolor{lightblue}{RGB}{235,242,255}
+\definecolor{tableheader}{RGB}{220,230,250}
+\definecolor{green}{RGB}{22,120,55}
+\definecolor{amber}{RGB}{200,100,10}
+\definecolor{red}{RGB}{180,30,30}
+\definecolor{codebg}{RGB}{242,244,250}
+\definecolor{muted}{RGB}{110,120,140}
+
+% ---- HYPERLINKS --------------------------------------------
+\hypersetup{colorlinks,linkcolor=blue,urlcolor=blue,
+  pdftitle={Micropro\_Commute QA Test Plan}}
+
+% ---- CODE STYLE --------------------------------------------
+\lstdefinestyle{shell}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue}\bfseries,
+  commentstyle=\color{green}\itshape,
+  numberstyle=\tiny\color{muted},
+  numbers=left, numbersep=8pt,
+  breaklines=true, frame=single,
+  rulecolor=\color{muted!40},
+  xleftmargin=1.5em, framexleftmargin=1.2em,
+  tabsize=2, showstringspaces=false,
+}
+\lstset{style=shell}
+
+% ---- HEADER/FOOTER -----------------------------------------
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small\itshape\nouppercase\leftmark}
+\fancyhead[R]{\small\textbf{\color{blue}Micropro\_Commute -- QA Test Plan}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.5pt}
+
+% ---- CUSTOM BOXES ------------------------------------------
+\newtcolorbox{notebox}[1]{
+  colback=lightblue, colframe=blue,
+  fonttitle=\bfseries\small, title=#1,
+  arc=2mm, boxrule=0.6pt, left=6pt, right=6pt,
+}
+\newtcolorbox{greenbox}[1]{
+  colback=green!5, colframe=green!70!black,
+  fonttitle=\bfseries\small, title=#1,
+  arc=2mm, boxrule=0.6pt, left=6pt, right=6pt,
+}
+
+% ---- BORDERED COLUMN TYPES ---------------------------------
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+\renewcommand{\arraystretch}{1.35}
+
+% ============================================================
+\begin{document}
+% ============================================================
+
+% ---- TITLE PAGE --------------------------------------------
+\begin{titlepage}
+\centering\vspace*{1.5cm}
+{\color{navy}\rule{\textwidth}{2pt}}\vspace{0.7cm}
+
+{\LARGE\bfseries Micropro\_Commute Enterprise Platform}\\\vspace{0.3cm}
+{\large Quality Assurance Test Plan \& Functional Verification Specification}
+
+\vspace{0.5cm}{\color{navy}\rule{\textwidth}{2pt}}\vspace{1.5cm}
+
+\begin{notebox}{Document Control}
+\begin{tabularx}{\textwidth}{|L{3.5cm}|X|}
+\hline
+\rowcolor{tableheader} \textbf{Field} & \textbf{Details} \\ \hline
+\textbf{Document Type}  & QA Test Plan \& Functional Verification \\ \hline
+\textbf{Version}        & 1.0.0 --- Production Release Candidate \\ \hline
+\textbf{Application}    & Micropro\_Commute -- Enterprise Collaboration Platform \\ \hline
+\textbf{Backend}        & FastAPI (Python 3.11), PostgreSQL / SQLite fallback \\ \hline
+\textbf{Frontend}       & React 18, Vite, TypeScript, Zustand \\ \hline
+\textbf{Media Server}   & Mediasoup SFU (Node.js / C++ Workers) \\ \hline
+\textbf{Prepared By}    & Quality Assurance \& Testing Engineering \\ \hline
+\textbf{Audience}       & QA Engineers, Test Leads, DevOps \\ \hline
+\textbf{Date}           & \today \\ \hline
+\end{tabularx}
+\end{notebox}
+
+\vspace{1cm}
+
+\begin{notebox}{Seed Credentials for Test Environment}
+\begin{tabularx}{\textwidth}{|L{2.5cm}|X|L{3cm}|L{2.5cm}|}
+\hline
+\rowcolor{tableheader} \textbf{Role} & \textbf{Email} & \textbf{Password} & \textbf{Username}\\ \hline
+Org Admin     & admin@example.com  & password123 & admin   \\ \hline
+Engineer      & alice@example.com  & password123 & alice   \\ \hline
+Product       & bob@example.com    & password123 & bob     \\ \hline
+DevOps        & charlie@example.com& password123 & charlie \\ \hline
+\end{tabularx}
+\end{notebox}
+
+\vfill{\small\color{muted}Confidential --- Internal Quality Assurance Use Only}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+% ============================================================
+\chapter{Application Overview}
+% ============================================================
+
+\section{Product Description}
+Micropro\_Commute is a production-grade enterprise collaboration platform modelled after Microsoft Teams. It provides real-time audio/video conferencing via Mediasoup SFU, direct and channel-based messaging, team and workspace management, role-based access control (RBAC), file sharing, calendar scheduling, AI meeting transcription, and cross-browser push notifications via Service Workers.
+
+\section{Technology Stack}
+
+\begin{xltabular}{\textwidth}{|L{3.5cm}|X|}
+\caption{Full Technology Stack} \\
+\hline
+\rowcolor{tableheader} \textbf{Layer} & \textbf{Technology} \\ \hline
+\endhead
+Frontend        & React 18, TypeScript, Vite, Zustand, TailwindCSS, Lucide Icons \\ \hline
+Backend API     & Python 3.11, FastAPI, Uvicorn, SQLAlchemy (async) \\ \hline
+Database        & PostgreSQL 16 (primary), SQLite (fallback) \\ \hline
+Real-Time       & WebSocket (native), Mediasoup SFU (C++ workers) \\ \hline
+Authentication  & JWT (Bearer), Refresh Tokens, OTP via Email \\ \hline
+Notifications   & Browser Service Worker API \\ \hline
+File Storage    & MinIO (S3-compatible) \\ \hline
+AI Features     & Speech Intelligence API (transcription \& diarisation) \\ \hline
+Deployment      & Docker Compose, Cloudflare Tunnel \\ \hline
+\end{xltabular}
+
+\section{Access Points}
+
+\begin{xltabular}{\textwidth}{|L{3.2cm}|L{6.5cm}|X|}
+\caption{Service Endpoints} \\
+\hline
+\rowcolor{tableheader} \textbf{Service} & \textbf{URL} & \textbf{Notes} \\ \hline
+\endhead
+Frontend SPA      & \url{http://192.168.1.147:3000}      & Main application \\ \hline
+Backend REST API  & \url{http://192.168.1.147:8000/api/v1} & FastAPI endpoints \\ \hline
+OpenAPI Docs      & \url{http://192.168.1.147:8000/docs}   & Swagger UI \\ \hline
+WebSocket         & \url{ws://192.168.1.147:8000/api/v1/ws} & Real-time signaling \\ \hline
+Mediasoup SFU     & \url{192.168.1.147:4000}             & WebRTC media server \\ \hline
+Speech AI         & \url{http://192.168.1.199:8080}      & Transcript API \\ \hline
+Cloudflare Tunnel & \url{https://teams-tunnel.domain.com} & Public relay \\ \hline
+\end{xltabular}
+
+% ============================================================
+\chapter{Environment Setup \& Test Prerequisites}
+% ============================================================
+
+\section{Starting the Application}
+
+\begin{lstlisting}[language=bash, caption=Start all services (local)]
+# From the project root
+./run-local.sh
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption=Start via Docker Compose (production)]
+docker-compose up --build
+\end{lstlisting}
+
+\section{Browser Requirements}
+All test cases must be executed on the following browsers:
+
+\begin{xltabular}{\textwidth}{|L{3.5cm}|C{2.5cm}|X|}
+\caption{Browser Compatibility Matrix} \\
+\hline
+\rowcolor{tableheader} \textbf{Browser} & \textbf{Min. Version} & \textbf{Critical Areas} \\ \hline
+\endhead
+Google Chrome   & 110+ & WebRTC, Notifications, Service Worker, \texttt{setSinkId} \\ \hline
+Microsoft Edge  & 110+ & WebRTC, Notifications, Service Worker \\ \hline
+Mozilla Firefox & 115+ & WebRTC, Notifications (verify permission prompt) \\ \hline
+Apple Safari    & 16.4+& WebRTC, limited Notification API \\ \hline
+\end{xltabular}
+
+% ============================================================
+\chapter{API Reference Overview}
+% ============================================================
+
+\section{REST API Modules}
+
+\begin{xltabular}{\textwidth}{|L{3cm}|L{5.5cm}|X|}
+\caption{Backend API Modules and Base Routes} \\
+\hline
+\rowcolor{tableheader} \textbf{Module} & \textbf{Base Route} & \textbf{Description} \\ \hline
+\endhead
+Authentication  & \url{/api/v1/auth}           & Login, register, OTP, password reset, refresh token \\ \hline
+Users           & \url{/api/v1/users}          & Profile, presence status, user listing \\ \hline
+Teams           & \url{/api/v1/teams}          & Workspace teams, members, ownership \\ \hline
+Channels        & \url{/api/v1/channels}       & Team channels, channel members, RBAC \\ \hline
+Messages        & \url{/api/v1/messages}       & Channel messages, threading \\ \hline
+Direct Messages & \url{/api/v1/direct-conversations} & 1-on-1 and group direct messaging \\ \hline
+Meetings        & \url{/api/v1/meetings}       & Create, join, leave, end, lobby, policy \\ \hline
+Calls           & \url{/api/v1/calls}          & Peer-to-peer and group call signaling \\ \hline
+Files           & \url{/api/v1/files}          & Upload, download, listing \\ \hline
+Calendar        & \url{/api/v1/calendar}       & Event scheduling \\ \hline
+Recordings      & \url{/api/v1/recordings}     & Meeting recordings storage \\ \hline
+Notifications   & \url{/api/v1/notifications}  & Notification history \\ \hline
+Admin           & \url{/api/v1/admin}          & Org admin panel \\ \hline
+Search          & \url{/api/v1/search}         & Cross-platform search \\ \hline
+WebSocket       & \url{/api/v1/ws}             & Real-time bidirectional signaling \\ \hline
+\end{xltabular}
+
+% ============================================================
+\chapter{Functional Test Cases}
+% ============================================================
+
+% ----------------------------------------------------------------
+\section{Module 1 --- Authentication}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{Authentication Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-AUTH-01 & Valid Login &
+1. Open the login page.\newline
+2. Enter \texttt{admin@example.com} / \texttt{password123}.\newline
+3. Click Login. &
+200 OK. JWT token issued and stored in session. \\ \hline
+
+TC-AUTH-02 & Invalid Login &
+1. Enter an incorrect email or password.\newline
+2. Click Login. &
+401 Unauthorized. Error message displayed. \\ \hline
+
+TC-AUTH-03 & OTP Delivery &
+1. Call \url{POST /auth/send-otp} with a valid email and purpose. &
+200 OK. OTP dispatched to inbox within 60 seconds. \\ \hline
+
+TC-AUTH-04 & Invalid OTP &
+1. Call \url{POST /auth/verify-otp} with an incorrect code. &
+400 Bad Request. Clear error returned. \\ \hline
+
+TC-AUTH-05 & Token Refresh &
+1. POST to \url{/auth/refresh} with valid refresh token. &
+200 OK. New access token issued. \\ \hline
+
+TC-AUTH-06 & Forgot Password &
+1. Navigate to Forgot Password page.\newline
+2. Enter registered email. &
+Password reset email dispatched. \\ \hline
+
+TC-AUTH-07 & Account Delete &
+1. Authenticate as test user.\newline
+2. Call \url{DELETE /users/me}. &
+204. Account purged and session invalidated. \\ \hline
+\end{xltabular}
+
+\clearpage
+
+% ----------------------------------------------------------------
+\section{Module 2 --- User Presence}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{User Presence Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-PRES-01 & Online on Connect &
+1. Log in and open the dashboard. &
+User appears as \texttt{available} to peers in real time. \\ \hline
+
+TC-PRES-02 & Dynamic Fallback &
+1. Fetch \url{GET /users} while user is connected.\newline
+2. Check presence field. &
+Field resolves as \texttt{available} even if DB stores \texttt{offline}. \\ \hline
+
+TC-PRES-03 & Manual Status &
+1. Click user avatar menu.\newline
+2. Select Busy or Do Not Disturb. &
+All peers receive \texttt{presence\_update} event immediately. \\ \hline
+
+TC-PRES-04 & Offline on Close &
+1. Log out or close the browser tab.\newline
+2. Observe status from another account. &
+Status becomes \texttt{offline} within 5 seconds. \\ \hline
+\end{xltabular}
+
+\clearpage
+
+% ----------------------------------------------------------------
+\section{Module 3 --- Teams and Channels}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{Teams and Channels Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-TEAM-01 & Create Team &
+1. Click New Team.\newline
+2. Enter name, select privacy (Public/Private).\newline
+3. Submit. &
+Team created. Default General channel auto-created. Creator assigned OWNER role. \\ \hline
+
+TC-TEAM-02 & Add Member &
+1. Open team settings.\newline
+2. Invite a user from the organisation. &
+User added as MEMBER. Appears in members list. \\ \hline
+
+TC-TEAM-03 & Update Role &
+1. As team owner, open member list.\newline
+2. Change a member's role to Moderator. &
+Role updated and reflected immediately. \\ \hline
+
+TC-TEAM-04 & Remove Member &
+1. As owner, remove a non-owner member. &
+Member removed. Access to private channels revoked. \\ \hline
+
+TC-TEAM-05 & Delete Team &
+1. As owner, click Delete Team.\newline
+2. Confirm. &
+Team soft-deleted. Hidden from all member workspaces. \\ \hline
+
+TC-CHAN-01 & Create Channel &
+1. Inside a team, click Add Channel.\newline
+2. Enter name and type (Standard / Private). &
+Channel created and visible to eligible members. \\ \hline
+
+TC-CHAN-02 & Private Channel Access &
+1. As a non-member, attempt to view a Private channel. &
+403 Forbidden. Channel not visible. \\ \hline
+
+TC-CHAN-03 & Post Message &
+1. Open a channel.\newline
+2. Type and send a message. &
+Message appears in real time for all channel members. \\ \hline
+\end{xltabular}
+
+\clearpage
+
+% ----------------------------------------------------------------
+\section{Module 4 --- Direct Messages}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{Direct Message Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-DM-01 & Start DM &
+1. Click New Message.\newline
+2. Search for a user and send a message. &
+Conversation created. Message delivered in real time. \\ \hline
+
+TC-DM-02 & Group DM &
+1. Create a DM with more than two participants. &
+Group conversation created. All members receive messages. \\ \hline
+
+TC-DM-03 & Unread Counter &
+1. Receive a message while viewing another screen. &
+Unread badge increments on the DM sidebar item. \\ \hline
+
+TC-DM-04 & Message Duplicate &
+1. Send a message from two clients simultaneously. &
+Each message appears exactly once without duplication. \\ \hline
+\end{xltabular}
+
+\clearpage
+
+% ----------------------------------------------------------------
+\section{Module 5 --- Meetings and Video Conferencing}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{Meeting and Conferencing Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-MEET-01 & Create Meeting &
+1. Click Meet Now or schedule a meeting.\newline
+2. Set title and type. &
+Meeting created. Unique meeting code issued. \\ \hline
+
+TC-MEET-02 & Join by Code &
+1. Enter a valid meeting code in the lobby. &
+Participant joins. Host sees admission request if lobby is enabled. \\ \hline
+
+TC-MEET-03 & Lobby Admission &
+1. Enable lobby in meeting policy.\newline
+2. A participant attempts to join. &
+Participant waits in lobby. Host admits or denies. \\ \hline
+
+TC-MEET-04 & Raise Hand &
+1. During a meeting, click the Hand icon. &
+Toast: ``You raised your hand''. Yellow badge visible on video tile to all peers. \\ \hline
+
+TC-MEET-05 & Emoji Reactions &
+1. Click a reaction button (thumbs-up, heart, clap, fire). &
+Emoji floats upward with animation visible to all participants. \\ \hline
+
+TC-MEET-06 & Screen Share &
+1. Click Share Screen and select a window. &
+Screen appears in main stage for all participants. \\ \hline
+
+TC-MEET-07 & Pin Stream &
+1. Click Pin on a participant or screen share tile. &
+Selected stream occupies the main stage. \\ \hline
+
+TC-MEET-08 & Mute Participant &
+1. As host, mute a participant from the participant list. &
+Target participant's mic is muted. \\ \hline
+
+TC-MEET-09 & Remove Participant &
+1. As host, remove a participant. &
+Participant is ejected and cannot rejoin without re-admission. \\ \hline
+
+TC-MEET-10 & End for All &
+1. As host, click End Call for All. &
+All participants are disconnected simultaneously. Meeting status set to ENDED. \\ \hline
+
+TC-MEET-11 & Media Re-Sync &
+1. Click Re-Sync during an active meeting. &
+WebRTC tracks are re-bound. Audio/video streams recover. \\ \hline
+
+TC-MEET-12 & Meeting Recording &
+1. As host, click Record.\newline
+2. Stop recording after a few seconds. &
+Recording file saved. All participants notified of recording state. \\ \hline
+\end{xltabular}
+
+\clearpage
+
+% ----------------------------------------------------------------
+\section{Module 6 --- Notifications}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{Notification Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-NOTIF-01 & Background Alert &
+1. Minimise the app tab.\newline
+2. Send a DM from another account. &
+OS-native notification popup appears. \\ \hline
+
+TC-NOTIF-02 & Single-Tab Focus &
+1. Click the notification popup. &
+Existing app tab is focused. No new tab is opened. \\ \hline
+
+TC-NOTIF-03 & DM Navigation &
+1. Click a DM notification. &
+App navigates directly to the correct conversation. \\ \hline
+
+TC-NOTIF-04 & Call Notification &
+1. Initiate a call to a user in background. &
+Incoming call notification displayed. Accept/Decline visible. \\ \hline
+
+TC-NOTIF-05 & Cross-Browser &
+1. Repeat TC-NOTIF-01 in Firefox and Edge. &
+Notifications appear correctly on all supported browsers. \\ \hline
+\end{xltabular}
+
+\clearpage
+
+% ----------------------------------------------------------------
+\section{Module 7 --- UI Layout and Sidebar}
+% ----------------------------------------------------------------
+
+\begin{xltabular}{\textwidth}{|L{2.5cm}|L{2.5cm}|X|L{3.5cm}|}
+\caption{UI Layout Test Cases} \\
+\hline
+\rowcolor{tableheader} \textbf{ID} & \textbf{Scenario} & \textbf{Steps} & \textbf{Expected Result} \\ \hline
+\endhead
+
+TC-UI-01 & Collapse Sidebar &
+1. Click the collapse button (PanelLeftClose) in the header. &
+Sidebar collapses to a 56 px icon rail. \\ \hline
+
+TC-UI-02 & Expand Sidebar &
+1. Click the expand button (PanelLeft) on the rail. &
+Sidebar expands to full 256 px width. \\ \hline
+
+TC-UI-03 & Team Switch in Rail &
+1. While collapsed, click a team avatar initial. &
+Active workspace switches. Sidebar remains collapsed. \\ \hline
+
+TC-UI-04 & Mini Call Player &
+1. Start a call, then click Minimise. &
+Draggable mini call window appears over the workspace. \\ \hline
+
+TC-UI-05 & Responsive Layout &
+1. Resize browser to mobile width (less than 768 px). &
+Sidebar hides. Navigation adapts to mobile layout. \\ \hline
+\end{xltabular}
+
+% ============================================================
+\chapter{Automated Test Commands}
+% ============================================================
+
+\section{Frontend Type Check}
+
+\begin{lstlisting}[language=bash, caption=TypeScript static analysis]
+cd frontend
+npx tsc --noEmit
+\end{lstlisting}
+
+Exit code 0 with no output confirms zero errors.
+
+\section{Frontend Build Verification}
+
+\begin{lstlisting}[language=bash, caption=Production build check]
+cd frontend
+npm run build
+\end{lstlisting}
+
+\section{Backend Test Suite}
+
+\begin{lstlisting}[language=bash, caption=Pytest execution]
+cd backend
+PYTHONPATH=. ./venv/bin/pytest app/tests -v --color=yes
+\end{lstlisting}
+
+\section{WebSocket Smoke Test}
+
+\begin{lstlisting}[language=bash, caption=WebSocket connectivity]
+# Replace <TOKEN> with a valid JWT bearer token
+wscat -c "ws://192.168.1.147:8000/api/v1/ws?token=<TOKEN>"
+\end{lstlisting}
+
+Expected: connection accepted, server sends \texttt{ping} frame within 5 seconds.
+
+\section{API Smoke Test via cURL}
+
+\begin{lstlisting}[language=bash, caption=Login API smoke test]
+curl -s -X POST http://192.168.1.147:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"password123"}' | python3 -m json.tool
+\end{lstlisting}
+
+% ============================================================
+\chapter{QA Sign-Off Checklist}
+% ============================================================
+
+All items below must be verified and signed off before a build is marked \textbf{QA Approved}.
+
+\begin{greenbox}{Release Sign-Off Requirements}
+\begin{itemize}[label=$\square$,leftmargin=1.8em,itemsep=5pt]
+  \item \textbf{Authentication} --- Login, OTP dispatch, token refresh, and account deletion verified.
+  \item \textbf{Presence} --- Online/offline states propagate correctly via WebSocket to all peers.
+  \item \textbf{Teams \& Channels} --- Create, member management, RBAC, and soft deletion verified.
+  \item \textbf{Direct Messages} --- Real-time delivery, no duplicates, unread counters correct.
+  \item \textbf{Meetings} --- Join, lobby, raise hand, emoji reactions, screen share, recording, end-for-all verified.
+  \item \textbf{Notifications} --- Single-tab focus, context routing, cross-browser (Chrome, Edge, Firefox) verified.
+  \item \textbf{Sidebar UI} --- Collapse and expand controls accessible at all times.
+  \item \textbf{TypeScript Build} --- \texttt{npx tsc --noEmit} passes with zero errors.
+  \item \textbf{Backend Tests} --- \texttt{pytest app/tests} passes with zero failures.
+\end{itemize}
+\end{greenbox}
+
+\vspace{1cm}
+
+\begin{xltabular}{\textwidth}{|L{3.5cm}|X|L{3cm}|}
+\caption{QA Approval Signatures} \\
+\hline
+\rowcolor{tableheader} \textbf{Role} & \textbf{Name and Signature} & \textbf{Date} \\ \hline
+\endhead
+QA Lead          & \hrulefill & \hrulefill \\ \hline
+Test Engineer    & \hrulefill & \hrulefill \\ \hline
+Dev Lead         & \hrulefill & \hrulefill \\ \hline
+Project Manager  & \hrulefill & \hrulefill \\ \hline
+\end{xltabular}
+
+\end{document}

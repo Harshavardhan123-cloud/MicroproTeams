@@ -28,6 +28,11 @@ backend/uploads/*
 # Build artifacts
 *.exe
 *.AppImage
+*.deb
+frontend/squashfs-root/
+mobile/build_output/
+mobile/ios_build/
+mobile/android/app/build/
 
 # OS
 .DS_Store

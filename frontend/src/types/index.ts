@@ -17,6 +17,7 @@ export interface User {
   is_active: boolean;
   is_superuser: boolean;
   role?: string;
+  is_admin?: boolean;
 }
 
 export interface Channel {

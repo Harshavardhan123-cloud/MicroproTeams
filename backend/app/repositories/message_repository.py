@@ -15,25 +15,27 @@ class MessageRepository:
             .options(
                 selectinload(Message.sender),
                 selectinload(Message.reactions).selectinload(MessageReaction.user),
+                selectinload(Message.attachments),
                 selectinload(Message.replies)
             )
             .where(Message.id == message_id)
         )
         return res.scalars().first()
 
-    async def get_channel_messages(self, channel_id: str, limit: int = 50) -> List[Message]:
+    async def get_channel_messages(self, channel_id: str, limit: int = 300) -> List[Message]:
         res = await self.db.execute(
             select(Message)
             .options(
                 selectinload(Message.sender),
                 selectinload(Message.reactions).selectinload(MessageReaction.user),
+                selectinload(Message.attachments),
                 selectinload(Message.replies)
             )
             .where(Message.channel_id == channel_id, Message.parent_message_id.is_(None))
-            .order_by(Message.created_at.asc())
+            .order_by(Message.created_at.desc())
             .limit(limit)
         )
-        return list(res.scalars().all())
+        return list(reversed(res.scalars().all()))
 
     async def get_replies(self, parent_message_id: str) -> List[Message]:
         res = await self.db.execute(
@@ -41,6 +43,7 @@ class MessageRepository:
             .options(
                 selectinload(Message.sender),
                 selectinload(Message.reactions).selectinload(MessageReaction.user),
+                selectinload(Message.attachments),
                 selectinload(Message.replies)
             )
             .where(Message.parent_message_id == parent_message_id)

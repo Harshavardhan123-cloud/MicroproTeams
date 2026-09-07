@@ -2,8 +2,7 @@ import logging
 import os
 import secrets as _secrets
 
-from pydantic import ConfigDict
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ class Settings(BaseSettings):
     S3_BUCKET: str = "teams-uploads"
     S3_REGION: str = "us-east-1"
 
-    model_config = ConfigDict(env_file=_ENV_FILE, extra="allow")
+    model_config = SettingsConfigDict(env_file=_ENV_FILE, extra="allow")
 
 settings = Settings()
 

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Device } from 'mediasoup-client';
 import { io, Socket } from 'socket.io-client';
+import { getToken } from '../utils/token';
+import { getTargetHostUrl } from '../api/client';
 
 export const useMediasoup = (
   localStream: MediaStream | null,
@@ -18,164 +20,26 @@ export const useMediasoup = (
   const consumersRef = useRef<Map<string, any>>(new Map()); // id -> consumer
 
   const isSetupRef = useRef(false);
+  const targetRoomId = conversationId || 'direct-call-room';
 
   const request = useCallback((type: string, data: any = {}) => {
     return new Promise<any>((resolve, reject) => {
       if (!socketRef.current) return reject('No socket');
       socketRef.current.emit(type, data, (res: any) => {
-        if (res.error) reject(res.error);
+        if (res?.error) reject(res.error);
         else resolve(res);
       });
     });
   }, []);
 
-  const connectAndProduce = useCallback(async () => {
-    if (!conversationId || callState !== 'active' || isSetupRef.current) return;
-    isSetupRef.current = true;
-
+  const consumeRemoteTrack = useCallback(async (producerId: string, peerId: string, peerUserName: string, kind: string) => {
     try {
-      // Connect to Mediasoup SFU Node.js Server via Vite SSL reverse proxy
-      const sfuUrl = window.location.origin;
-      const socket = io(sfuUrl, {
-        path: '/sfu/socket.io',
-        transports: ['websocket'],
-        autoConnect: true,
-      });
-      socketRef.current = socket;
+      if (!deviceRef.current || !recvTransportRef.current) return;
+      if (Array.from(consumersRef.current.values()).some((c: any) => c.producerId === producerId)) return;
 
-      socket.on('connect', async () => {
-        console.log('[Mediasoup] Connected to SFU Server');
-        
-        // 1. Join Room & Get Router Capabilities
-        const { routerRtpCapabilities } = await request('joinRoom', {
-          roomId: conversationId,
-          userName: userName || 'Participant'
-        });
-        const device = new Device();
-        await device.load({ routerRtpCapabilities });
-        deviceRef.current = device;
-
-        // 2. Create Send Transport
-        const sendTransportInfo = await request('createWebRtcTransport', { roomId: conversationId });
-        const sendTransport = device.createSendTransport(sendTransportInfo.params);
-        sendTransportRef.current = sendTransport;
-
-        sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-          try {
-            await request('connectWebRtcTransport', {
-              roomId: conversationId,
-              transportId: sendTransport.id,
-              dtlsParameters
-            });
-            callback();
-          } catch (error) {
-            errback(error as Error);
-          }
-        });
-
-        sendTransport.on('produce', async (parameters, callback, errback) => {
-          try {
-            const { id } = await request('produce', {
-              roomId: conversationId,
-              transportId: sendTransport.id,
-              kind: parameters.kind,
-              rtpParameters: parameters.rtpParameters,
-              appData: parameters.appData
-            });
-            callback({ id });
-          } catch (error) {
-            errback(error as Error);
-          }
-        });
-
-        // 3. Create Receive Transport
-        const recvTransportInfo = await request('createWebRtcTransport', { roomId: conversationId });
-        const recvTransport = device.createRecvTransport(recvTransportInfo.params);
-        recvTransportRef.current = recvTransport;
-
-        recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-          try {
-            await request('connectWebRtcTransport', {
-              roomId: conversationId,
-              transportId: recvTransport.id,
-              dtlsParameters
-            });
-            callback();
-          } catch (error) {
-            errback(error as Error);
-          }
-        });
-
-        // 4. Produce Local Tracks
-        if (localStream) {
-          for (const track of localStream.getTracks()) {
-            const producer = await sendTransport.produce({ track });
-            producersRef.current.set(track.kind, producer);
-          }
-        }
-
-        // 5. Consume Existing Producers
-        const existingProducers = await request('getProducers', { roomId: conversationId });
-        for (const p of existingProducers) {
-          consumeRemoteTrack(p.producerId, p.peerId, p.userName || 'Participant', p.kind);
-        }
-      });
-
-      // Handle new producers dynamically
-      socket.on('newProducer', ({ producerId, peerId, userName, kind }) => {
-        consumeRemoteTrack(producerId, peerId, userName || 'Participant', kind);
-      });
-
-      // Handle peer/consumer closures
-      socket.on('peerClosed', ({ peerId }) => {
-        setRemoteStreams(prev => prev.filter(s => s.participantId !== peerId));
-      });
-      
-      socket.on('consumerClosed', ({ consumerId }) => {
-        const consumer = consumersRef.current.get(consumerId);
-        if (consumer) {
-          consumer.close();
-          consumersRef.current.delete(consumerId);
-          // Note: Full stream removal handled by peerClosed for simplicity, 
-          // or we could filter track by track.
-        }
-      });
-
-      // Handle disconnect / reconnect resync
-      socket.on('disconnect', (reason) => {
-        console.warn('[Mediasoup] Socket disconnected:', reason);
-      });
-
-      socket.io.on('reconnect', async () => {
-        console.log('[Mediasoup] Socket reconnected! Resynchronizing room state...');
-        try {
-          // Re-join room
-          await request('joinRoom', { roomId: conversationId, userName: userName || 'Participant' });
-          // Fetch active producers snapshot to resync missed tracks
-          const existingProducers = await request('getProducers', { roomId: conversationId });
-          for (const p of existingProducers) {
-            consumeRemoteTrack(p.producerId, p.peerId, p.userName || 'Participant', p.kind);
-          }
-        } catch (err) {
-          console.error('[Mediasoup] Resync after reconnect failed:', err);
-        }
-      });
-
-    } catch (err) {
-      console.error('[Mediasoup] Setup Error:', err);
-      isSetupRef.current = false;
-    }
-  }, [conversationId, callState, localStream, userName, request]);
-
-  const consumeRemoteTrack = async (producerId: string, peerId: string, peerUserName: string, kind: string) => {
-    try {
-      if (!deviceRef.current || !recvTransportRef.current) {
-        console.warn('[Mediasoup] Device or recvTransport not ready yet for producer:', producerId);
-        return;
-      }
       const { rtpCapabilities } = deviceRef.current;
       const data = await request('consume', {
-        roomId: conversationId,
+        roomId: targetRoomId,
         transportId: recvTransportRef.current.id,
         producerId,
         rtpCapabilities
@@ -193,7 +57,6 @@ export const useMediasoup = (
       const stream = new MediaStream([consumer.track]);
       
       setRemoteStreams(prev => {
-        // Replace existing track of same kind for this peer, or add new stream
         const existing = prev.findIndex(s => s.participantId === peerId && s.kind === kind);
         if (existing !== -1) {
           const next = [...prev];
@@ -203,26 +66,187 @@ export const useMediasoup = (
         return [...prev, { participantId: peerId, userName: peerUserName, stream, kind }];
       });
 
-      await request('resumeConsumer', { roomId: conversationId, consumerId: consumer.id });
+      await request('resumeConsumer', { roomId: targetRoomId, consumerId: consumer.id });
+      try {
+        await consumer.resume();
+      } catch (clientResumeErr) {
+        console.warn('[Mediasoup] Client consumer resume warning:', clientResumeErr);
+      }
     } catch (err) {
       console.error('[Mediasoup] Consume Error:', err);
     }
-  };
+  }, [targetRoomId, request]);
 
-  // Hot-swap tracks if localStream changes (e.g. Screen Share)
+  const connectAndProduce = useCallback(async () => {
+    if (callState !== 'active' || isSetupRef.current) return;
+    isSetupRef.current = true;
+
+    try {
+      const sfuUrl = getTargetHostUrl();
+      const socket = io(sfuUrl, {
+        path: '/sfu/socket.io',
+        transports: ['websocket'],
+        autoConnect: true,
+        auth: { token: getToken() },
+      });
+      socketRef.current = socket;
+
+      socket.on('connect', async () => {
+        console.log('[Mediasoup] Connected to SFU Server for room:', targetRoomId);
+        
+        // 1. Join Room & Get Router Capabilities
+        const { routerRtpCapabilities } = await request('joinRoom', {
+          roomId: targetRoomId,
+          userName: (userName && userName !== 'Participant' && userName !== 'Teammate') ? userName : 'User'
+        });
+        const device = new Device();
+        await device.load({ routerRtpCapabilities });
+        deviceRef.current = device;
+
+        // 2. Create Send Transport
+        const sendTransportInfo = await request('createWebRtcTransport', { roomId: targetRoomId });
+        const sendTransport = device.createSendTransport(sendTransportInfo.params);
+        sendTransportRef.current = sendTransport;
+
+        sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+          try {
+            await request('connectWebRtcTransport', {
+              roomId: targetRoomId,
+              transportId: sendTransport.id,
+              dtlsParameters
+            });
+            callback();
+          } catch (error) {
+            errback(error as Error);
+          }
+        });
+
+        sendTransport.on('produce', async (parameters, callback, errback) => {
+          try {
+            const { id } = await request('produce', {
+              roomId: targetRoomId,
+              transportId: sendTransport.id,
+              kind: parameters.kind,
+              rtpParameters: parameters.rtpParameters,
+              appData: parameters.appData
+            });
+            callback({ id });
+          } catch (error) {
+            errback(error as Error);
+          }
+        });
+
+        // 3. Create Receive Transport
+        const recvTransportInfo = await request('createWebRtcTransport', { roomId: targetRoomId });
+        const recvTransport = device.createRecvTransport(recvTransportInfo.params);
+        recvTransportRef.current = recvTransport;
+
+        recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+          try {
+            await request('connectWebRtcTransport', {
+              roomId: targetRoomId,
+              transportId: recvTransport.id,
+              dtlsParameters
+            });
+            callback();
+          } catch (error) {
+            errback(error as Error);
+          }
+        });
+
+        // 4. Produce Local Tracks
+        if (localStream) {
+          for (const track of localStream.getTracks()) {
+            try {
+              const producer = await sendTransport.produce({ track });
+              producersRef.current.set(track.kind, producer);
+            } catch (pErr) {
+              console.warn('[Mediasoup] Local track produce warning:', pErr);
+            }
+          }
+        }
+
+        // 5. Consume Existing Producers
+        try {
+          const existingProducers = await request('getProducers', { roomId: targetRoomId });
+          for (const p of existingProducers) {
+            consumeRemoteTrack(p.producerId, p.peerId, (p.userName && p.userName !== 'Participant' && p.userName !== 'Teammate') ? p.userName : 'User', p.kind);
+          }
+        } catch (e) {}
+      });
+
+      // Handle new producers dynamically
+      socket.on('newProducer', ({ producerId, peerId, userName, kind }) => {
+        consumeRemoteTrack(producerId, peerId, (userName && userName !== 'Participant' && userName !== 'Teammate') ? userName : 'User', kind);
+      });
+
+      // Handle peer/consumer closures
+      socket.on('peerClosed', ({ peerId }) => {
+        setRemoteStreams(prev => prev.filter(s => s.participantId !== peerId));
+      });
+      
+      socket.on('consumerClosed', ({ consumerId }) => {
+        const consumer = consumersRef.current.get(consumerId);
+        if (consumer) {
+          consumer.close();
+          consumersRef.current.delete(consumerId);
+        }
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.warn('[Mediasoup] Socket disconnected:', reason);
+      });
+
+      socket.io.on('reconnect', async () => {
+        try {
+          await request('joinRoom', { roomId: targetRoomId, userName: (userName && userName !== 'Participant' && userName !== 'Teammate') ? userName : 'User' });
+          const existingProducers = await request('getProducers', { roomId: targetRoomId });
+          for (const p of existingProducers) {
+            consumeRemoteTrack(p.producerId, p.peerId, (p.userName && p.userName !== 'Participant' && p.userName !== 'Teammate') ? p.userName : 'User', p.kind);
+          }
+        } catch (err) {
+          console.error('[Mediasoup] Resync error:', err);
+        }
+      });
+
+    } catch (err) {
+      console.error('[Mediasoup] Setup Error:', err);
+      isSetupRef.current = false;
+    }
+  }, [targetRoomId, callState, localStream, userName, request, consumeRemoteTrack]);
+
+  // Hot-swap or produce tracks dynamically if localStream updates
   useEffect(() => {
-    if (!localStream || !sendTransportRef.current || !isSetupRef.current) return;
+    if (!localStream || !sendTransportRef.current) return;
     
-    localStream.getTracks().forEach(track => {
+    localStream.getTracks().forEach(async track => {
       const producer = producersRef.current.get(track.kind);
       if (producer && producer.track !== track) {
         producer.replaceTrack({ track }).catch((e: any) => console.error(e));
-      } else if (!producer) {
-        // If it's a new kind of track
-        sendTransportRef.current.produce({ track }).then((p: any) => producersRef.current.set(track.kind, p));
+      } else if (!producer && sendTransportRef.current) {
+        try {
+          const p = await sendTransportRef.current.produce({ track });
+          producersRef.current.set(track.kind, p);
+        } catch (e) {}
       }
     });
   }, [localStream]);
+
+  // Periodic resync polling to ensure no remote producer is ever missed
+  useEffect(() => {
+    if (callState !== 'active' || !socketRef.current) return;
+    const interval = setInterval(async () => {
+      try {
+        if (socketRef.current?.connected && recvTransportRef.current) {
+          const existingProducers = await request('getProducers', { roomId: targetRoomId });
+          for (const p of existingProducers) {
+            consumeRemoteTrack(p.producerId, p.peerId, (p.userName && p.userName !== 'Participant' && p.userName !== 'Teammate') ? p.userName : 'User', p.kind);
+          }
+        }
+      } catch (e) {}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [callState, targetRoomId, request, consumeRemoteTrack]);
 
   useEffect(() => {
     connectAndProduce();

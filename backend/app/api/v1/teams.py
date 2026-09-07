@@ -21,6 +21,7 @@ class TeamCreateRequest(BaseModel):
     description: Optional[str] = None
     privacy: TeamPrivacy = TeamPrivacy.PUBLIC
     avatar_url: Optional[str] = None
+    member_ids: Optional[List[str]] = None
 
 class TeamUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -110,6 +111,20 @@ async def create_team(
         role=MemberRole.OWNER
     )
     db.add(member)
+
+    # Add initial specified team members
+    if req.member_ids:
+        for uid in req.member_ids:
+            if str(uid) != str(current_user.id):
+                u_res = await db.execute(
+                    select(User.id).where(User.id == uid, User.organization_id == current_user.organization_id)
+                )
+                if u_res.scalars().first():
+                    db.add(TeamMember(
+                        team_id=team.id,
+                        user_id=uid,
+                        role=MemberRole.MEMBER
+                    ))
 
     # Create default General channel
     general_channel = Channel(

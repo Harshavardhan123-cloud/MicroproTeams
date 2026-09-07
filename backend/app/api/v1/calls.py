@@ -52,3 +52,44 @@ async def get_call_history(
         for c in calls
     ]
     return success_response(data)
+
+class CallActionRequest(BaseModel):
+    session_id: Optional[str] = None
+
+@router.post("/{call_id}/accept")
+async def accept_call(
+    call_id: str,
+    req: Optional[CallActionRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    svc = MeetingService(db)
+    session_id = req.session_id if req else None
+    res = await svc.accept_call(call_id=call_id, accepting_user=current_user, session_id=session_id)
+    if not res.get("success"):
+        return error_response(message=res.get("message", "Call state transition failed"), code=res.get("code", "CALL_ERROR"), status_code=409)
+    return success_response(res)
+
+@router.post("/{call_id}/decline")
+async def decline_call(
+    call_id: str,
+    req: Optional[CallActionRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    svc = MeetingService(db)
+    session_id = req.session_id if req else None
+    res = await svc.decline_call(call_id=call_id, declining_user=current_user, session_id=session_id)
+    return success_response(res)
+
+@router.post("/{call_id}/cancel")
+async def cancel_call(
+    call_id: str,
+    req: Optional[CallActionRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    svc = MeetingService(db)
+    session_id = req.session_id if req else None
+    res = await svc.cancel_call(call_id=call_id, caller_user=current_user, session_id=session_id)
+    return success_response(res)

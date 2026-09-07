@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, HelpCircle, LogOut, User as UserIcon, Settings, Moon, Sun, MessageSquare, Hash, Users as UsersIcon, Edit3, Check, BookOpen, Command, LifeBuoy, Info, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { Search, Bell, HelpCircle, LogOut, Settings, Moon, Sun, MessageSquare, Users as UsersIcon, Check, BookOpen, Command, LifeBuoy, Info, PhoneCall, Trash2, X } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useCallStore } from '../../stores/callStore';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { notificationService } from '../../services/notificationService';
 import { PresenceStatus } from '../../types';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../../api/client';
+import { MicroproLogo } from '../common/MicroproLogo';
+import { ThemeSwitcher } from '../common/ThemeSwitcher';
 
 const STATUS_CONFIG: Record<string, { label: string; dotClass: string; textClass: string }> = {
   available: { label: 'Available', dotClass: 'bg-emerald-500 shadow-emerald-500/50', textClass: 'text-emerald-400' },
@@ -13,9 +18,23 @@ const STATUS_CONFIG: Record<string, { label: string; dotClass: string; textClass
   away: { label: 'Away', dotClass: 'bg-amber-500 shadow-amber-500/50', textClass: 'text-amber-400' },
 };
 
+function formatRelativeTime(isoString?: string): string {
+  if (!isoString) return 'Just now';
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
 export const TopHeader: React.FC = () => {
   const { user, logout, setPresence } = useAuthStore();
-  const { setUserSettingsOpen } = useUIStore();
+  const { setUserSettingsOpen, setShortcutsOpen, setDocsOpen, setAboutOpen } = useUIStore();
+  const { callState, canRejoin, setIsCallMinimized, rejoinLastCall } = useCallStore();
+  const { notifications, setNotifications, markAllNotifsRead: markAllStoreRead, clearAllNotifications, removeNotification } = useNotificationStore();
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -28,14 +47,6 @@ export const TopHeader: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('');
-  const [isEditingStatusMsg, setIsEditingStatusMsg] = useState(false);
-
-  const [notifications, setNotifications] = useState([
-    { id: '1', title: 'Ethan Hunt sent you a direct message', time: '2m ago', unread: true, type: 'message' },
-    { id: '2', title: 'Upcoming Standup Meeting in Engineering channel', time: '15m ago', unread: true, type: 'meeting' },
-    { id: '3', title: 'Admin Alex Vance updated workspace policies', time: '1h ago', unread: true, type: 'system' }
-  ]);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -43,6 +54,30 @@ export const TopHeader: React.FC = () => {
   const searchRef = useRef<HTMLDivElement>(null);
 
   const navigate = useNavigate();
+
+  const loadNotifications = async () => {
+    try {
+      const res = await notificationService.getNotifications();
+      if (res.notifications.length > 0) {
+        const formatted = res.notifications.map((n) => ({
+          id: n.id,
+          title: n.title,
+          body: n.body,
+          time: formatRelativeTime(n.created_at),
+          unread: !n.is_read,
+          type: n.type || 'system',
+          created_at: n.created_at
+        }));
+        setNotifications(formatted);
+      }
+    } catch (err) {
+      console.error('Fetch notifications error:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -64,6 +99,7 @@ export const TopHeader: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    localStorage.setItem('mc_theme', theme);
     localStorage.setItem('teams_theme', theme);
     if (theme === 'light') {
       document.documentElement.classList.add('light-mode');
@@ -93,57 +129,81 @@ export const TopHeader: React.FC = () => {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const handlePresenceChange = (status: PresenceStatus) => {
+  const { addToast } = useNotificationStore();
+
+  const handlePresenceChange = async (status: PresenceStatus) => {
     setPresence(status);
+    try {
+      await apiClient.put('/users/me/presence', { presence: status });
+    } catch (err) {
+      console.error('Update presence error:', err);
+    }
+    const label = STATUS_CONFIG[status]?.label || status;
+    addToast({
+      title: 'Status Updated',
+      body: `Your availability status is now set to ${label}.`,
+      type: 'info'
+    });
   };
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  const markAllNotifsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+  const handleMarkAllRead = async () => {
+    markAllStoreRead();
+    try {
+      await notificationService.markAsRead(true);
+    } catch (err) {
+      console.error('Mark notifications read error:', err);
+    }
   };
 
   const unreadCount = notifications.filter((n) => n.unread).length;
   const currentStatus = STATUS_CONFIG[user?.presence || 'available'] || STATUS_CONFIG.available;
 
   return (
-    <header className="h-12 bg-[#1B1B1C] border-b border-[#2B2B2C] flex items-center justify-between px-4 select-none shrink-0 z-20">
-      {/* Search Input Bar */}
-      <div className="flex-1 max-w-xl mx-auto relative" ref={searchRef}>
-        <div className="relative flex items-center">
-          <Search className="w-4 h-4 absolute left-3 text-teams-muted" />
+    <header className="h-12 bg-[#0B0D12]/95 backdrop-blur-xl border-b border-white/[0.06] flex items-center justify-between px-5 select-none shrink-0 z-20 shadow-sm">
+      
+      {/* Center Command Palette Search Bar */}
+      <div className="flex-1 max-w-lg mx-auto relative" ref={searchRef}>
+        <div className="relative flex items-center group">
+          <Search className="w-4 h-4 absolute left-3.5 text-mc-muted group-focus-within:text-cyan-400 transition-colors duration-200" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search messages, files, and users (Ctrl + E)"
-            className="w-full bg-[#252526] text-xs text-teams-text placeholder-teams-muted pl-9 pr-4 py-1.5 rounded-md border border-transparent focus:border-teams-purple focus:outline-none transition-all shadow-inner"
+            placeholder="Search messages, people, files... (Ctrl + K / ⌘K)"
+            className="w-full bg-[#13151F]/90 text-xs text-white placeholder-mc-muted/80 pl-9 pr-14 py-1.5 rounded-full border border-white/[0.08] focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20 focus:outline-none transition-all duration-200 shadow-inner"
           />
+          <div className="absolute right-3 hidden sm:flex items-center gap-1">
+            <kbd className="text-[9px] font-mono font-semibold text-mc-muted bg-white/[0.06] border border-white/10 px-1.5 py-0.5 rounded shadow-sm">
+              ⌘K
+            </kbd>
+          </div>
         </div>
 
-        {/* Search Results Dropdown Popup */}
+        {/* Search Results Dropdown */}
         {searchQuery.trim().length > 0 && (
-          <div className="absolute top-10 left-0 right-0 bg-[#252525] border border-teams-border rounded-lg shadow-2xl p-3 z-50 max-h-96 overflow-y-auto space-y-3">
+          <div className="absolute top-10 left-0 right-0 bg-[#141722]/95 border border-white/10 rounded-2xl shadow-2xl p-3.5 z-50 max-h-96 overflow-y-auto space-y-3 mc-glass backdrop-blur-2xl">
             {isSearching ? (
-              <p className="text-xs text-teams-muted text-center py-2 animate-pulse">Searching enterprise workspace...</p>
+              <p className="text-xs text-mc-muted text-center py-3 animate-pulse">Searching workspace...</p>
             ) : searchResults ? (
               <>
                 {searchResults.users?.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-teams-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                      <UsersIcon className="w-3 h-3 text-teams-purple" /> Users
+                    <p className="text-[10px] font-bold text-mc-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <UsersIcon className="w-3 h-3 text-indigo-400" /> People
                     </p>
                     <div className="space-y-1">
                       {searchResults.users.map((u: any) => (
-                        <div key={u.id} className="flex items-center gap-2 p-2 hover:bg-teams-hover rounded-md cursor-pointer">
-                          <div className="w-6 h-6 rounded-full bg-teams-purple flex items-center justify-center font-bold text-[10px] text-white uppercase">
+                        <div key={u.id} className="flex items-center gap-2 p-2 hover:bg-white/5 rounded-xl cursor-pointer">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center font-bold text-[10px] text-white uppercase">
                             {u.display_name?.charAt(0)}
                           </div>
                           <div>
                             <p className="text-xs font-semibold text-white">{u.display_name}</p>
-                            <p className="text-[10px] text-teams-muted">{u.email}</p>
+                            <p className="text-[10px] text-mc-muted">{u.email}</p>
                           </div>
                         </div>
                       ))}
@@ -153,14 +213,14 @@ export const TopHeader: React.FC = () => {
 
                 {searchResults.messages?.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-teams-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                      <MessageSquare className="w-3 h-3 text-teams-purple" /> Messages
+                    <p className="text-[10px] font-bold text-mc-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <MessageSquare className="w-3 h-3 text-indigo-400" /> Messages
                     </p>
                     <div className="space-y-1">
                       {searchResults.messages.map((m: any) => (
-                        <div key={m.id} className="p-2 hover:bg-teams-hover rounded-md cursor-pointer">
+                        <div key={m.id} className="p-2 hover:bg-white/5 rounded-xl cursor-pointer">
                           <p className="text-xs text-white truncate">{m.content}</p>
-                          <p className="text-[10px] text-teams-muted">{m.sender_name || 'User'}</p>
+                          <p className="text-[10px] text-mc-muted">{m.sender_name || 'User'}</p>
                         </div>
                       ))}
                     </div>
@@ -168,7 +228,7 @@ export const TopHeader: React.FC = () => {
                 )}
 
                 {!searchResults.users?.length && !searchResults.messages?.length && (
-                  <p className="text-xs text-teams-muted text-center py-2">No matching results found.</p>
+                  <p className="text-xs text-mc-muted text-center py-2">No matching workspace results.</p>
                 )}
               </>
             ) : null}
@@ -176,202 +236,258 @@ export const TopHeader: React.FC = () => {
         )}
       </div>
 
-      {/* Right Controls Bar */}
+      {/* Right Action Controls */}
       <div className="flex items-center gap-2">
+        {/* Rejoin Call Button */}
+        {(callState === 'active' || canRejoin) && (
+          <button
+            onClick={() => {
+              if (callState === 'active') {
+                setIsCallMinimized(false);
+              } else if (canRejoin) {
+                rejoinLastCall();
+              }
+            }}
+            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-full transition-all flex items-center gap-1.5 text-xs shadow-lg shadow-emerald-600/30 animate-pulse active:scale-95 mr-1"
+            title="Rejoin Active Meeting"
+          >
+            <PhoneCall className="w-3.5 h-3.5 text-white" />
+            <span>Rejoin Meeting</span>
+          </button>
+        )}
+
         {/* Theme Switcher */}
         <button
           onClick={toggleTheme}
-          className="p-2 text-teams-muted hover:text-white rounded-lg hover:bg-teams-hover transition-all relative"
+          className="w-8 h-8 rounded-full flex items-center justify-center text-mc-secondary hover:text-white hover:bg-white/5 transition-all"
           title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
         >
           {theme === 'dark' ? (
             <Sun className="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform" />
           ) : (
-            <Moon className="w-4 h-4 text-teams-purple hover:-rotate-12 transition-transform" />
+            <Moon className="w-4 h-4 text-indigo-400 hover:-rotate-12 transition-transform" />
           )}
         </button>
 
-        {/* Notifications Bell */}
+        {/* Notifications */}
         <div className="relative" ref={notifRef}>
           <button
-            onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-            className="p-2 text-teams-muted hover:text-white rounded-lg hover:bg-teams-hover transition-all relative"
-            title="Activity Notifications"
+            onClick={() => {
+              setIsNotificationsOpen(!isNotificationsOpen);
+              if (!isNotificationsOpen) loadNotifications();
+            }}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-mc-secondary hover:text-white hover:bg-white/5 transition-all relative"
+            title="Notifications"
           >
             <Bell className="w-4 h-4" />
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[#1B1B1C] animate-pulse" />
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-[#0B0D12] animate-pulse" />
             )}
           </button>
 
           {isNotificationsOpen && (
-            <div className="absolute right-0 mt-2 w-80 bg-[#202021] border border-[#333335] rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
-              <div className="p-3 border-b border-[#2C2C2E] bg-[#242426] flex items-center justify-between">
-                <div className="flex items-center gap-2 font-bold text-xs text-white">
-                  <Bell className="w-3.5 h-3.5 text-teams-purple" />
-                  <span>Activity & Notifications</span>
+            <div className="absolute right-0 top-full mt-1.5 w-80 bg-[#171923] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150 mc-glass">
+              <div className="p-3 border-b border-white/5 bg-[#11131A] flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-xs text-white font-display">
+                  <Bell className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Activity Inbox</span>
                   {unreadCount > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-teams-purple text-[10px] text-white">
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-[10px] text-white font-bold">
                       {unreadCount}
                     </span>
                   )}
                 </div>
-                {unreadCount > 0 && (
-                  <button
-                    onClick={markAllNotifsRead}
-                    className="text-[10px] text-teams-purple hover:underline font-medium"
-                  >
-                    Mark all read
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={handleMarkAllRead}
+                      className="text-[10px] text-indigo-400 hover:underline font-medium"
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                  {notifications.length > 0 && (
+                    <button
+                      onClick={clearAllNotifications}
+                      className="text-[10px] text-rose-400 hover:underline font-medium flex items-center gap-1"
+                      title="Clear all"
+                    >
+                      <Trash2 className="w-3 h-3 text-rose-400" />
+                      <span>Clear</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="divide-y divide-[#2C2C2E] max-h-72 overflow-y-auto">
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    className={`p-3 transition-colors ${
-                      n.unread ? 'bg-teams-purple/10' : 'hover:bg-[#252528]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-white font-medium leading-snug">{n.title}</p>
-                      {n.unread && <span className="w-1.5 h-1.5 rounded-full bg-teams-purple shrink-0 mt-1" />}
-                    </div>
-                    <span className="text-[10px] text-teams-muted mt-1 block">{n.time}</span>
+              <div className="divide-y divide-white/5 max-h-72 overflow-y-auto">
+                {notifications.length === 0 ? (
+                  <div className="p-4 text-center text-mc-muted text-xs">
+                    Inbox zero. No new notifications.
                   </div>
-                ))}
+                ) : (
+                  notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      className={`p-3 transition-colors flex items-start justify-between gap-2 group ${
+                        n.unread ? 'bg-indigo-600/10' : 'hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs text-white font-medium leading-snug truncate">{n.title}</p>
+                          {n.unread && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 mt-1" />}
+                        </div>
+                        {n.body && <p className="text-[11px] text-mc-muted mt-0.5 line-clamp-2">{n.body}</p>}
+                        <span className="text-[10px] text-mc-muted mt-1 block">
+                          {formatRelativeTime(n.created_at || new Date().toISOString())}
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeNotification(n.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-mc-muted hover:text-rose-400 hover:bg-rose-500/10 rounded transition-all shrink-0"
+                        title="Dismiss notification"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}
         </div>
 
-        {/* Help & Support */}
+        {/* Platform Theme Switcher */}
+        <ThemeSwitcher variant="compact" />
+
+        {/* Help & Documentation */}
         <div className="relative" ref={helpRef}>
           <button
             onClick={() => setIsHelpOpen(!isHelpOpen)}
-            className="p-2 text-teams-muted hover:text-white rounded-lg hover:bg-teams-hover transition-all"
-            title="Help & Platform Support"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-mc-secondary hover:text-white hover:bg-white/5 transition-all"
+            title="Help & Support"
           >
             <HelpCircle className="w-4 h-4" />
           </button>
 
           {isHelpOpen && (
-            <div className="absolute right-0 mt-2 w-72 bg-[#202021] border border-[#333335] rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
-              <div className="p-3 border-b border-[#2C2C2E] bg-[#242426] font-bold text-xs text-white flex items-center gap-2">
-                <LifeBuoy className="w-3.5 h-3.5 text-teams-purple" />
-                <span>Help & Enterprise Support</span>
+            <div className="absolute right-0 top-full mt-1.5 w-72 bg-[#171923] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150 mc-glass">
+              <div className="p-3 border-b border-white/5 bg-[#11131A] font-bold text-xs text-white flex items-center gap-2 font-display">
+                <LifeBuoy className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Help & Guides</span>
               </div>
 
               <div className="p-2 space-y-1">
-                <div className="p-2 hover:bg-[#28282B] rounded-lg cursor-pointer flex items-center gap-2.5 transition-colors">
-                  <Command className="w-4 h-4 text-teams-accent shrink-0" />
+                <button
+                  onClick={() => {
+                    setIsHelpOpen(false);
+                    setShortcutsOpen(true);
+                  }}
+                  className="w-full p-2 hover:bg-white/5 rounded-xl cursor-pointer flex items-center gap-2.5 transition-colors text-left"
+                >
+                  <Command className="w-4 h-4 text-cyan-400 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-white">Keyboard Shortcuts</p>
-                    <p className="text-[10px] text-teams-muted">Ctrl+E (Search), Ctrl+N (New Chat)</p>
+                    <p className="text-xs font-bold text-white">Shortcuts</p>
+                    <p className="text-[10px] text-mc-muted">Ctrl+E (Search), Ctrl+N (New Chat)</p>
                   </div>
-                </div>
+                </button>
 
-                <div className="p-2 hover:bg-[#28282B] rounded-lg cursor-pointer flex items-center gap-2.5 transition-colors">
+                <button
+                  onClick={() => {
+                    setIsHelpOpen(false);
+                    setDocsOpen(true);
+                  }}
+                  className="w-full p-2 hover:bg-white/5 rounded-xl cursor-pointer flex items-center gap-2.5 transition-colors text-left"
+                >
                   <BookOpen className="w-4 h-4 text-emerald-400 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-white">Documentation & Manuals</p>
-                    <p className="text-[10px] text-teams-muted">View platform architectural guides</p>
+                    <p className="text-xs font-bold text-white">Documentation</p>
+                    <p className="text-[10px] text-mc-muted">View platform architectural guides</p>
                   </div>
-                </div>
+                </button>
 
-                <div className="p-2 hover:bg-[#28282B] rounded-lg cursor-pointer flex items-center gap-2.5 transition-colors">
+                <button
+                  onClick={() => {
+                    setIsHelpOpen(false);
+                    setAboutOpen(true);
+                  }}
+                  className="w-full p-2 hover:bg-white/5 rounded-xl cursor-pointer flex items-center gap-2.5 transition-colors text-left"
+                >
                   <Info className="w-4 h-4 text-amber-400 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-white">About MicroproTeams</p>
-                    <p className="text-[10px] text-teams-muted">Version v2.4.0 (Enterprise Build)</p>
+                    <p className="text-xs font-bold text-white">About Micropro_Commute</p>
+                    <p className="text-[10px] text-mc-muted">Version v3.0 (Enterprise Build)</p>
                   </div>
-                </div>
+                </button>
               </div>
             </div>
           )}
         </div>
 
-        <div className="w-px h-4 bg-teams-border mx-1" />
+        <div className="w-px h-4 bg-white/10 mx-1" />
 
         {/* User Profile Avatar Popover */}
-        <div className="relative" ref={menuRef}>
+        <div className="relative flex items-center gap-2" ref={menuRef}>
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className="flex items-center gap-2 p-1 rounded-md hover:bg-teams-hover transition-colors focus:outline-none"
+            className="flex items-center gap-2.5 h-8 px-2.5 rounded-full hover:bg-white/[0.08] transition-all focus:outline-none border border-white/10 bg-[#13151F] hover:border-cyan-500/40 shadow-sm shrink-0 group"
           >
-            <div className="relative">
-              <div className="w-7 h-7 rounded-full bg-teams-purple flex items-center justify-center font-bold text-xs text-white uppercase shadow-md ring-1 ring-white/10">
-                {user?.display_name?.charAt(0) || 'U'}
-              </div>
-              <span
-                className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[#1B1B1C] ${currentStatus.dotClass}`}
-              />
+            <div className="relative flex items-center shrink-0">
+              {user?.avatar_url ? (
+                <img src={user.avatar_url} alt={user.display_name} className="w-6 h-6 rounded-full object-cover shadow-md ring-1 ring-white/10 group-hover:scale-105 transition-transform" />
+              ) : (
+                <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-[10px] text-white uppercase shadow-md ring-1 ring-white/10 group-hover:scale-105 transition-transform">
+                  {user?.display_name?.charAt(0) || 'U'}
+                </div>
+              )}
+              <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5">
+                {user?.presence === 'available' && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span
+                  className={`relative inline-flex rounded-full h-2.5 w-2.5 ring-2 ring-[#0B0D12] ${currentStatus.dotClass}`}
+                />
+              </span>
             </div>
+            <span className={`text-[11px] font-bold ${currentStatus.textClass} hidden sm:inline capitalize font-display`}>
+              {currentStatus.label}
+            </span>
           </button>
 
           {isMenuOpen && (
-            <div className="absolute right-0 mt-2 w-72 bg-[#202021] border border-[#333335] rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
-              <div className="p-4 border-b border-[#2C2C2E] bg-[#242426] flex items-center gap-3">
+            <div className="absolute right-0 top-full mt-1.5 w-72 bg-[#171923] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150 mc-glass">
+              <div className="p-4 border-b border-white/5 bg-[#11131A] flex items-center gap-3">
                 <div className="relative shrink-0">
-                  <div className="w-11 h-11 rounded-full bg-teams-purple flex items-center justify-center font-bold text-base text-white uppercase shadow-lg ring-2 ring-white/10">
-                    {user?.display_name?.charAt(0) || 'U'}
-                  </div>
+                  {user?.avatar_url ? (
+                    <img src={user.avatar_url} alt={user.display_name} className="w-10 h-10 rounded-full object-cover shadow-lg ring-2 ring-white/10" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center font-bold text-sm text-white uppercase shadow-lg ring-2 ring-white/10">
+                      {user?.display_name?.charAt(0) || 'U'}
+                    </div>
+                  )}
                   <span
-                    className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-[#242426] ${currentStatus.dotClass}`}
+                    className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-[#11131A] ${currentStatus.dotClass}`}
                   />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="font-bold text-sm text-white truncate leading-snug">
+                  <h3 className="font-bold text-sm text-white truncate leading-snug font-display">
                     {user?.display_name || 'Enterprise User'}
                   </h3>
-                  <p className="text-[11px] text-teams-muted truncate leading-tight">
+                  <p className="text-[11px] text-mc-muted truncate leading-tight">
                     {user?.email || 'user@organization.com'}
                   </p>
-                  <p className="text-[10px] text-teams-purple font-medium mt-0.5">
-                    {user?.job_title || 'Enterprise Team Member'}
+                  <p className="text-[10px] text-indigo-400 font-medium mt-0.5">
+                    {user?.job_title || 'Team Member'}
                   </p>
                 </div>
               </div>
 
-              {/* Status Message */}
-              <div className="px-4 py-2.5 border-b border-[#2C2C2E]">
-                {isEditingStatusMsg ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={statusMessage}
-                      onChange={(e) => setStatusMessage(e.target.value)}
-                      placeholder="What's your status today?"
-                      className="w-full bg-[#181819] border border-teams-purple text-xs text-white px-2 py-1 rounded focus:outline-none"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') setIsEditingStatusMsg(false);
-                      }}
-                    />
-                    <button
-                      onClick={() => setIsEditingStatusMsg(false)}
-                      className="p-1 text-emerald-400 hover:text-emerald-300"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setIsEditingStatusMsg(true)}
-                    className="w-full flex items-center justify-between text-[11px] text-teams-muted hover:text-white py-0.5 transition-colors group"
-                  >
-                    <span className="truncate italic">
-                      {statusMessage ? `"${statusMessage}"` : 'Set status message'}
-                    </span>
-                    <Edit3 className="w-3 h-3 text-teams-muted group-hover:text-white shrink-0 ml-1" />
-                  </button>
-                )}
-              </div>
-
               {/* Presence Selector */}
-              <div className="p-3 border-b border-[#2C2C2E]">
-                <p className="text-[10px] font-bold text-teams-muted uppercase tracking-wider mb-2 px-1">
+              <div className="p-3 border-b border-white/5">
+                <p className="text-[10px] font-bold text-mc-muted uppercase tracking-wider mb-2 px-1">
                   Availability Status
                 </p>
                 <div className="grid grid-cols-2 gap-1.5">
@@ -382,10 +498,10 @@ export const TopHeader: React.FC = () => {
                       <button
                         key={statusKey}
                         onClick={() => handlePresenceChange(statusKey)}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
                           isSelected
-                            ? 'bg-[#2E2E32] text-white ring-1 ring-teams-purple/60 shadow-sm'
-                            : 'text-[#C8C8CC] hover:bg-[#28282B] hover:text-white'
+                            ? 'bg-white/10 text-white ring-1 ring-indigo-500/50 shadow-sm'
+                            : 'text-mc-secondary hover:bg-white/5 hover:text-white'
                         }`}
                       >
                         <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dotClass}`} />
@@ -403,9 +519,9 @@ export const TopHeader: React.FC = () => {
                     setIsMenuOpen(false);
                     setUserSettingsOpen(true);
                   }}
-                  className="w-full px-3 py-2 text-xs text-[#E1E1E3] hover:bg-[#28282B] hover:text-white rounded-lg flex items-center gap-2.5 transition-colors font-semibold"
+                  className="w-full px-3 py-2 text-xs text-mc-secondary hover:bg-white/5 hover:text-white rounded-xl flex items-center gap-2.5 transition-colors font-medium"
                 >
-                  <Settings className="w-4 h-4 text-teams-muted" />
+                  <Settings className="w-4 h-4 text-mc-muted" />
                   <span>Profile & User Settings</span>
                 </button>
 
@@ -415,7 +531,7 @@ export const TopHeader: React.FC = () => {
                     logout();
                     navigate('/login');
                   }}
-                  className="w-full px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-lg flex items-center gap-2.5 transition-colors font-semibold"
+                  className="w-full px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-xl flex items-center gap-2.5 transition-colors font-medium"
                 >
                   <LogOut className="w-4 h-4 text-rose-400" />
                   <span>Sign Out</span>

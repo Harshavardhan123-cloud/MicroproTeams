@@ -25,11 +25,6 @@ class AuthorizationService:
 
     @staticmethod
     async def can_access_team(user: User, team_id: str, db: AsyncSession) -> bool:
-        # The org-scoping filter must run before any admin bypass: an
-        # ORG_ADMIN is only an admin of their OWN org, so "is_org_admin"
-        # can never short-circuit this without first confirming the team
-        # actually belongs to that org — otherwise any self-appointed admin
-        # of a brand-new org could reach every other org's teams.
         res = await db.execute(
             select(Team).where(
                 Team.id == team_id,
@@ -42,9 +37,6 @@ class AuthorizationService:
             return False
 
         if await AuthorizationService.is_org_admin(user, db):
-            return True
-
-        if team.privacy == "public":
             return True
 
         mem_res = await db.execute(

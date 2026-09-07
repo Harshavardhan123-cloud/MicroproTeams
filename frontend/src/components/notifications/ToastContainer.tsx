@@ -21,26 +21,26 @@ export const ToastContainer: React.FC = () => {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className="pointer-events-auto bg-[#1F1F24] border border-teams-purple/50 rounded-2xl p-4 shadow-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-4 duration-300 backdrop-blur-md"
+          className="pointer-events-auto bg-[#1A1C23] border border-indigo-500/40 rounded-2xl p-4 shadow-2xl shadow-indigo-950/50 flex items-start gap-3 animate-in fade-in slide-in-from-top-4 duration-300 backdrop-blur-xl"
         >
-          <div className="w-9 h-9 rounded-xl bg-teams-purple/20 border border-teams-purple/40 flex items-center justify-center text-teams-purple shrink-0 mt-0.5 shadow-inner">
+          <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center shrink-0 mt-0.5 shadow-inner">
             {toast.type === 'call' ? (
               <PhoneCall className="w-4 h-4 text-emerald-400" />
             ) : toast.type === 'chat' ? (
-              <MessageSquare className="w-4 h-4 text-teams-purple" />
+              <MessageSquare className="w-4 h-4 text-indigo-400" />
             ) : (
-              <Info className="w-4 h-4 text-teams-accent" />
+              <Info className="w-4 h-4 text-cyan-400" />
             )}
           </div>
 
           <div className="flex-1 min-w-0">
-            <h4 className="font-bold text-xs text-white truncate">{toast.title}</h4>
-            <p className="text-[11px] text-teams-muted line-clamp-2 mt-0.5 leading-relaxed">{toast.body}</p>
+            <h4 className="font-bold text-xs !text-white truncate">{toast.title}</h4>
+            <p className="text-[11px] !text-gray-300 line-clamp-2 mt-0.5 leading-relaxed">{toast.body}</p>
           </div>
 
           <button
             onClick={() => removeToast(toast.id)}
-            className="p-1 text-teams-muted hover:text-white rounded hover:bg-teams-hover shrink-0"
+            className="p-1 !text-gray-400 hover:!text-white rounded hover:bg-white/10 shrink-0 transition-colors"
           >
             <X className="w-3.5 h-3.5" />
           </button>

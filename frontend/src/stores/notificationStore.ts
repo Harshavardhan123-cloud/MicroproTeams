@@ -8,21 +8,38 @@ export interface ToastItem {
   timestamp: number;
 }
 
+export interface ActivityNotificationItem {
+  id: string;
+  title: string;
+  body?: string;
+  time: string;
+  unread: boolean;
+  type: string;
+  created_at: string;
+}
+
 interface NotificationState {
   unreadChatCount: number;
   unreadByConversation: Record<string, number>;
   toasts: ToastItem[];
+  notifications: ActivityNotificationItem[];
 
   incrementUnread: (conversationId: string) => void;
   clearUnread: (conversationId: string) => void;
   addToast: (toast: Omit<ToastItem, 'id' | 'timestamp'>) => void;
   removeToast: (id: string) => void;
+  setNotifications: (items: ActivityNotificationItem[]) => void;
+  addNotification: (item: { title: string; body?: string; type?: string }) => void;
+  markAllNotifsRead: () => void;
+  clearAllNotifications: () => void;
+  removeNotification: (id: string) => void;
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({
   unreadChatCount: 0,
   unreadByConversation: {},
   toasts: [],
+  notifications: [],
 
   incrementUnread: (conversationId: string) => {
     set((state) => {
@@ -51,10 +68,60 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   addToast: (toast) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newToast: ToastItem = { ...toast, id, timestamp: Date.now() };
-    set((state) => ({ toasts: [newToast, ...state.toasts].slice(0, 5) }));
+    
+    // Also create dynamic activity notification item
+    const notifId = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newNotif: ActivityNotificationItem = {
+      id: notifId,
+      title: toast.title,
+      body: toast.body,
+      time: 'Just now',
+      unread: true,
+      type: toast.type,
+      created_at: new Date().toISOString()
+    };
+
+    set((state) => ({
+      toasts: [newToast, ...state.toasts].slice(0, 5),
+      notifications: [newNotif, ...state.notifications]
+    }));
   },
 
   removeToast: (id) => {
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
+  },
+
+  setNotifications: (items) => {
+    set({ notifications: items });
+  },
+
+  addNotification: (item) => {
+    const id = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newNotif: ActivityNotificationItem = {
+      id,
+      title: item.title,
+      body: item.body,
+      time: 'Just now',
+      unread: true,
+      type: item.type || 'system',
+      created_at: new Date().toISOString()
+    };
+    set((state) => ({ notifications: [newNotif, ...state.notifications] }));
+  },
+
+  markAllNotifsRead: () => {
+    set((state) => ({
+      notifications: state.notifications.map((n) => ({ ...n, unread: false }))
+    }));
+  },
+
+  clearAllNotifications: () => {
+    set({ notifications: [] });
+  },
+
+  removeNotification: (id: string) => {
+    set((state) => ({
+      notifications: state.notifications.filter((n) => n.id !== id)
+    }));
   }
 }));

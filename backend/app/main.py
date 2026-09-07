@@ -1,7 +1,8 @@
 import os
 import re
 import logging
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -33,7 +34,7 @@ from app.core.redis import get_redis, close_redis
 from app.api.v1 import (
     auth, users, teams, channels, messages, websocket, files,
     direct_messages, search, audit_logs, meetings, calendar, notifications,
-    calls, meetings_signaling
+    calls, meetings_signaling, recordings, meeting_ai, admin
 )
 from app.services.seed import seed_data
 from app.services.file_service import UPLOAD_DIR
@@ -63,24 +64,123 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # isn't needed; combining a wildcard origin with allow_credentials=True would let
 # any site make authenticated cross-origin requests on a logged-in user's behalf.
 # "null" covers Electron's packaged app, which loads its UI from a file:// page.
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "null",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Mount Static Files Directory
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+from fastapi import Depends
+from fastapi.responses import Response, FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.models.models import FileRecord, MessageAttachment
+from sqlalchemy.future import select
+
+@app.api_route("/uploads/{file_name:path}", methods=["GET", "HEAD"])
+async def serve_upload_file(
+    file_name: str,
+    download: int = 0,
+    db: AsyncSession = Depends(get_db)
+):
+    # 1. Try DB lookup first (BLOB/TOAST storage in DB)
+    try:
+        import urllib.parse
+        base_name = os.path.basename(file_name)
+        decoded_name = urllib.parse.unquote(base_name)
+        res = await db.execute(
+            select(FileRecord).where(
+                (FileRecord.storage_key == base_name) |
+                (FileRecord.storage_key == decoded_name) |
+                (FileRecord.name == base_name) |
+                (FileRecord.name == decoded_name) |
+                (FileRecord.original_name == base_name) |
+                (FileRecord.original_name == decoded_name)
+            )
+        )
+        rec = res.scalars().first()
+        if rec and (rec.file_data or rec.base64_data):
+            data_bytes = rec.file_data
+            if not data_bytes and rec.base64_data:
+                import base64
+                data_bytes = base64.b64decode(rec.base64_data)
+            final_bytes = bytes(data_bytes) if isinstance(data_bytes, (bytes, memoryview, bytearray)) else str(data_bytes).encode('utf-8')
+            headers = {"Access-Control-Allow-Origin": "*"}
+            if download == 1 or download:
+                headers["Content-Disposition"] = f'attachment; filename="{rec.original_name or rec.name}"'
+            return Response(content=final_bytes, media_type=rec.mime_type or "application/octet-stream", headers=headers)
+
+        res_att = await db.execute(
+            select(MessageAttachment).where(
+                (MessageAttachment.display_name == base_name) |
+                (MessageAttachment.display_name == decoded_name) |
+                (MessageAttachment.file_url.endswith(base_name)) |
+                (MessageAttachment.file_url.endswith(decoded_name))
+            )
+        )
+        att = res_att.scalars().first()
+        if att and (att.file_data or att.base64_data):
+            data_bytes = att.file_data
+            if not data_bytes and att.base64_data:
+                import base64
+                data_bytes = base64.b64decode(att.base64_data)
+            final_bytes = bytes(data_bytes) if isinstance(data_bytes, (bytes, memoryview, bytearray)) else str(data_bytes).encode('utf-8')
+            headers = {"Access-Control-Allow-Origin": "*"}
+            if download == 1 or download:
+                headers["Content-Disposition"] = f'attachment; filename="{att.display_name}"'
+            return Response(content=final_bytes, media_type=att.mime_type or "application/octet-stream", headers=headers)
+    except Exception as db_err:
+        import traceback
+        traceback.print_exc()
+
+    # 2. Disk fallback if not in DB
+    target_path = os.path.join(UPLOAD_DIR, file_name)
+
+    # Extension fallback check if direct path doesn't exist (e.g., UUID without extension or legacy original filename)
+    if not os.path.exists(target_path):
+        base_name = os.path.basename(file_name)
+        ext_target = os.path.splitext(base_name)[1].lower()
+        if os.path.exists(UPLOAD_DIR):
+            for candidate in os.listdir(UPLOAD_DIR):
+                if candidate.startswith(base_name):
+                    target_path = os.path.join(UPLOAD_DIR, candidate)
+                    break
+            if not os.path.exists(target_path) and ext_target:
+                for candidate in sorted(os.listdir(UPLOAD_DIR), reverse=True):
+                    if candidate.endswith(ext_target):
+                        target_path = os.path.join(UPLOAD_DIR, candidate)
+                        break
+
+    if not os.path.exists(target_path) or not os.path.isfile(target_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = os.path.splitext(target_path)[1].lstrip('.').lower()
+    mime_types = {
+        "pdf": "application/pdf",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "svg": "image/svg+xml",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "doc": "application/msword",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls": "application/vnd.ms-excel",
+        "zip": "application/zip",
+        "txt": "text/plain",
+    }
+    media_type = mime_types.get(ext, "application/octet-stream")
+    filename_header = os.path.basename(target_path)
+
+    return FileResponse(
+        target_path,
+        media_type=media_type,
+        filename=filename_header if download == 1 else None,
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 # Mount API Routers
 app.include_router(auth.router, prefix="/api/v1")
@@ -98,6 +198,10 @@ app.include_router(calendar.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(calls.router, prefix="/api/v1")
 app.include_router(meetings_signaling.router, prefix="/api/v1")
+app.include_router(recordings.router, prefix="/api/v1")
+app.include_router(meeting_ai.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
+
 
 @app.get("/api/v1/health")
 async def health_check():

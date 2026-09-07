@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,9 +6,11 @@ from sqlalchemy.future import select
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models.models import Notification, User
+from app.models.models import User
+from app.models.notification import Notification, NotificationPreference
 from app.api.deps import get_current_user
 from app.core.response import success_response
+from app.services.notification_service import get_user_preferences, update_user_preferences
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -23,31 +25,15 @@ async def get_notifications(
 ):
     res = await db.execute(
         select(Notification)
-        .where(
-            Notification.user_id == current_user.id,
-            Notification.organization_id == current_user.organization_id
-        )
+        .where(Notification.user_id == current_user.id)
         .order_by(Notification.created_at.desc())
         .limit(100)
     )
     items = res.scalars().all()
 
-    unread_count = sum(1 for n in items if not n.is_read)
+    unread_count = sum(1 for n in items if n.status == "UNREAD")
 
-    data = [
-        {
-            "id": str(n.id),
-            "type": n.type,
-            "title": n.title,
-            "body": n.body,
-            "resource_type": n.resource_type,
-            "resource_id": n.resource_id,
-            "is_read": n.is_read,
-            "created_at": n.created_at.isoformat() if n.created_at else None,
-            "read_at": n.read_at.isoformat() if n.read_at else None
-        }
-        for n in items
-    ]
+    data = [n.to_dict() for n in items]
 
     return success_response({
         "unread_count": unread_count,
@@ -64,12 +50,12 @@ async def mark_notifications_read(
         res = await db.execute(
             select(Notification).where(
                 Notification.user_id == current_user.id,
-                Notification.is_read == False
+                Notification.status == "UNREAD"
             )
         )
         items = res.scalars().all()
         for n in items:
-            n.is_read = True
+            n.status = "READ"
             n.read_at = datetime.utcnow()
     elif req.notification_ids:
         res = await db.execute(
@@ -80,8 +66,25 @@ async def mark_notifications_read(
         )
         items = res.scalars().all()
         for n in items:
-            n.is_read = True
+            n.status = "READ"
             n.read_at = datetime.utcnow()
 
     await db.commit()
     return success_response({"message": "Notifications marked as read."})
+
+@router.get("/preferences")
+async def get_preferences_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    pref = await get_user_preferences(db, str(current_user.id))
+    return success_response(pref.to_dict())
+
+@router.put("/preferences")
+async def update_preferences_endpoint(
+    updates: Dict[str, Any],
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    pref = await update_user_preferences(db, str(current_user.id), updates)
+    return success_response(pref.to_dict())

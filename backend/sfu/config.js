@@ -1,8 +1,34 @@
+const path = require('path');
+const os = require('os');
+
+// Load the project-root .env explicitly
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+
+function getAnnouncedIp() {
+  if (process.env.SFU_ANNOUNCED_IP) {
+    return process.env.SFU_ANNOUNCED_IP;
+  }
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
+const announcedIp = getAnnouncedIp();
+console.log(`[SFU CONFIG] Auto-detected WebRTC Announced IP: ${announcedIp}`);
+
 module.exports = {
-  listenIp: '0.0.0.0',
-  listenPort: 3010,
+  listenIp: process.env.SFU_LISTEN_IP || '0.0.0.0',
+  listenPort: parseInt(process.env.SFU_LISTEN_PORT || '3010', 10),
+  jwtSecret: process.env.JWT_SECRET || null,
+  corsOrigin: process.env.SFU_CORS_ORIGIN || '*',
   mediasoup: {
-    numWorkers: Object.keys(require('os').cpus()).length,
+    numWorkers: Object.keys(os.cpus()).length,
     worker: {
       rtcMinPort: 40000,
       rtcMaxPort: 49999,
@@ -50,8 +76,8 @@ module.exports = {
     webRtcTransport: {
       listenIps: [
         {
-          ip: '0.0.0.0',
-          announcedIp: '127.0.0.1' // In production, this should be the public IP
+          ip: process.env.SFU_LISTEN_IP || '0.0.0.0',
+          announcedIp: announcedIp
         }
       ],
       maxIncomingBitrate: 1500000,

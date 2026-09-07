@@ -1,6 +1,5 @@
 import { defineConfig, createLogger } from 'vite';
 import react from '@vitejs/plugin-react';
-import basicSsl from '@vitejs/plugin-basic-ssl';
 import path from 'path';
 
 const logger = createLogger();
@@ -13,7 +12,7 @@ logger.error = (msg, options) => {
 export default defineConfig({
   base: './',
   customLogger: logger,
-  plugins: [react(), basicSsl()],
+  plugins: [react()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -22,6 +21,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
+    strictPort: true,
     proxy: {
       '/api/v1/ws': {
         target: 'ws://localhost:8000',
@@ -34,6 +34,10 @@ export default defineConfig({
         }
       },
       '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/uploads': {
         target: 'http://localhost:8000',
         changeOrigin: true,
       },

@@ -61,14 +61,18 @@ class FileService:
         unique_key = f"{uuid.uuid4()}.{ext}"
         file_path = os.path.join(UPLOAD_DIR, unique_key)
 
-        hasher = hashlib.sha256()
-        with open(file_path, "wb") as buffer:
-            while chunk := file.file.read(8192):
-                hasher.update(chunk)
-                buffer.write(chunk)
+        await file.seek(0)
+        file_bytes = await file.read()
+        import base64
+        b64_data = base64.b64encode(file_bytes).decode('utf-8')
+        file_size = len(file_bytes)
+        checksum = hashlib.sha256(file_bytes).hexdigest()
 
-        file_size = os.path.getsize(file_path)
-        checksum = hasher.hexdigest()
+        try:
+            with open(file_path, "wb") as buffer:
+                buffer.write(file_bytes)
+        except Exception:
+            pass
 
         file_rec = FileRecord(
             organization_id=user.organization_id,
@@ -79,6 +83,8 @@ class FileService:
             extension=ext,
             size=file_size,
             storage_key=unique_key,
+            file_data=file_bytes,
+            base64_data=b64_data,
             checksum=checksum,
             status=FileStatus.READY,
             visibility=visibility

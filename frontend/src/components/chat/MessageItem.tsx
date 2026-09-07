@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
 import { Message } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
-import { MessageSquare, Edit2, Trash2, Smile, Copy, Check, X } from 'lucide-react';
-import { apiClient } from '../../api/client';
+import { MessageSquare, Edit2, Trash2, Smile, Copy, Check, CheckCheck } from 'lucide-react';
+import { apiClient, getMediaUrl } from '../../api/client';
+
+import { UserAvatar } from '../common/UserAvatar';
+import { DeleteMessageModal } from '../modals/DeleteMessageModal';
+import { formatISTTime } from '../../utils/dateUtils';
+import { AttachmentCard } from './AttachmentCard';
 
 interface MessageItemProps {
   message: Message;
@@ -18,8 +23,56 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
   const [editContent, setEditContent] = useState(message.content);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const isOwner = user?.id === message.sender_id;
+  const isAdmin = user?.is_admin || user?.is_superuser || user?.role === 'ADMIN' || user?.role === 'ORG_ADMIN';
+  const canEditOrDelete = isOwner || isAdmin;
+
+  // Extract attachments from message payload or markdown tags
+  const effectiveAttachments: any[] = [];
+  const seenKeys = new Set<string>();
+
+  const addAttachment = (name: string, rawUrl: string, type?: string, size?: number) => {
+    if (!rawUrl) return;
+    if (rawUrl.startsWith('blob:')) return;
+    const formattedUrl = getMediaUrl(rawUrl);
+    const key = formattedUrl.includes('/uploads/') ? formattedUrl.split('/uploads/')[1] : formattedUrl;
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+
+    const ext = (name || '').split('.').pop()?.toLowerCase() || '';
+    const isImgExt = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+
+    effectiveAttachments.push({
+      name: name || key,
+      url: formattedUrl,
+      type: type || (isImgExt ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream'),
+      size
+    });
+  };
+
+  if ((message as any).attachments && Array.isArray((message as any).attachments)) {
+    for (const att of (message as any).attachments) {
+      if (att.url) {
+        addAttachment(att.name, att.url, att.type, att.size);
+      }
+    }
+  }
+
+  let rawContent = message.content || '';
+  const attRegex = /(?:\[Attachment:\s*([^\]]+)\]\(([^)]+)\)|📁\s*Attachment:\s*\[([^\]]+)\]\(([^)]+)\))/gi;
+  let match;
+  while ((match = attRegex.exec(rawContent)) !== null) {
+    const name = match[1] || match[3];
+    const url = match[2] || match[4];
+    addAttachment(name, url);
+  }
+
+  const displayContent = rawContent
+    .replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '')
+    .replace(/📁\s*Attachment:\s*\[[^\]]+\]\([^)]+\)/gi, '')
+    .trim();
 
   const handleCopyText = async () => {
     try {
@@ -42,14 +95,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
     }
   };
 
-  const handleDelete = async () => {
-    if (confirm('Delete this message?')) {
-      try {
-        await apiClient.delete(`/messages/${message.id}`);
-        onRefresh();
-      } catch (err) {
-        console.error('Delete error:', err);
-      }
+  const handleDelete = () => {
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async (mode: 'me' | 'everyone') => {
+    try {
+      await apiClient.delete(`/messages/${message.id}?mode=${mode}`);
+      onRefresh();
+    } catch (err) {
+      console.error('Delete error:', err);
     }
   };
 
@@ -64,46 +119,86 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
   };
 
   return (
-    <div className="group relative flex items-start gap-3 px-4 py-2 hover:bg-[#1E1E1E] transition-colors rounded-lg">
+    <div className="group relative flex items-start gap-3 px-4 py-2.5 hover:bg-white/[0.03] transition-colors rounded-xl select-text">
       {/* Sender Avatar */}
-      <div className="w-8 h-8 rounded-full bg-teams-purple flex items-center justify-center font-bold text-xs text-white uppercase shrink-0 mt-0.5 shadow">
-        {message.sender?.display_name?.charAt(0) || 'U'}
-      </div>
+      <UserAvatar
+        user={message.sender}
+        avatarUrl={message.sender_avatar || message.sender?.avatar_url || (isOwner ? user?.avatar_url : undefined)}
+        name={message.sender?.display_name || message.sender_name}
+        size="sm"
+        className="mt-0.5"
+      />
 
       {/* Message Content Area */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <span className="font-bold text-xs text-white">{message.sender?.display_name}</span>
-          <span className="text-[10px] text-teams-muted">
-            {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          <span className="font-bold text-xs text-white font-display">{message.sender?.display_name || message.sender_name}</span>
+          <span className="text-[10px] text-mc-muted">
+            {formatISTTime(message.created_at)}
           </span>
-          {message.is_edited && <span className="text-[9px] text-teams-muted italic">(edited)</span>}
+          {isOwner && (
+            <span
+              title={
+                localStorage.getItem('mc_read_receipts') !== 'false'
+                  ? (message as any).is_read
+                    ? 'Read'
+                    : 'Delivered'
+                  : 'Sent'
+              }
+            >
+              <CheckCheck
+                className={`w-3.5 h-3.5 ${
+                  localStorage.getItem('mc_read_receipts') !== 'false' && (message as any).is_read
+                    ? 'text-cyan-400'
+                    : 'text-mc-muted'
+                }`}
+              />
+            </span>
+          )}
+          {message.is_edited && <span className="text-[9px] text-mc-muted italic">(edited)</span>}
         </div>
 
         {isEditing ? (
-          <div className="flex flex-col gap-2 bg-[#282828] p-2.5 rounded-xl border border-teams-purple/60 mt-1">
+          <div className="flex flex-col gap-2 bg-[#171923] p-3 rounded-2xl border border-indigo-500/50 mt-1">
             <textarea
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
-              className="w-full bg-[#181819] text-xs text-white p-2 rounded-lg border border-teams-border focus:outline-none focus:border-teams-purple resize-none min-h-[60px]"
+              className="w-full bg-[#11131A] text-xs text-white p-2.5 rounded-xl border border-white/10 focus:outline-none focus:border-indigo-500 resize-none min-h-[60px]"
             />
             <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setIsEditing(false)}
-                className="px-2 py-1 text-[11px] text-teams-muted hover:text-white rounded"
+                className="px-3 py-1 text-xs text-mc-muted hover:text-white rounded-lg"
               >
                 Cancel
               </button>
               <button
                 onClick={handleUpdate}
-                className="px-3 py-1 bg-teams-purple hover:bg-teams-purple-hover text-white text-[11px] font-bold rounded flex items-center gap-1"
+                className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1 shadow-md shadow-indigo-600/30"
               >
-                <Check className="w-3 h-3" /> Save
+                <Check className="w-3.5 h-3.5" /> Save
               </button>
             </div>
           </div>
         ) : (
-          <p className="text-xs text-teams-text leading-relaxed whitespace-pre-wrap">{message.content}</p>
+          <div className="space-y-2">
+            {effectiveAttachments.length > 0 && (
+              <div className="flex flex-col gap-2 my-1.5">
+                {effectiveAttachments.map((att: any, idx: number) => (
+                  <AttachmentCard
+                    key={idx}
+                    name={att.name}
+                    url={att.url}
+                    size={att.size}
+                    type={att.type}
+                  />
+                ))}
+              </div>
+            )}
+            {displayContent.length > 0 && (
+              <p className="text-xs text-mc-text leading-relaxed whitespace-pre-wrap select-text">{displayContent}</p>
+            )}
+          </div>
         )}
 
         {/* Emoji Reactions Row */}
@@ -118,10 +213,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
               <button
                 key={emoji}
                 onClick={() => handleToggleReaction(emoji)}
-                className="flex items-center gap-1 px-2 py-0.5 bg-[#2A2A2A] border border-teams-border/60 hover:border-teams-purple rounded-full text-xs transition-colors"
+                className="flex items-center gap-1 px-2.5 py-0.5 bg-[#171923] border border-white/10 hover:border-indigo-500 rounded-full text-xs transition-colors shadow-sm"
               >
                 <span>{emoji}</span>
-                <span className="text-[10px] text-teams-muted font-bold">{count}</span>
+                <span className="text-[10px] text-mc-muted font-bold">{count}</span>
               </button>
             ))}
           </div>
@@ -131,7 +226,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
         <div className="mt-1.5 flex items-center gap-3">
           <button
             onClick={() => onOpenThread(message)}
-            className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-teams-accent hover:underline"
+            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-indigo-400 hover:underline"
           >
             <MessageSquare className="w-3 h-3" />
             <span>{message.replies_count ? `${message.replies_count} replies` : 'Reply in thread'}</span>
@@ -140,10 +235,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
       </div>
 
       {/* Floating Action Menu Bar */}
-      <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-4 top-2 bg-[#282828] border border-teams-border rounded-lg shadow-lg flex items-center p-1 gap-1 z-10">
+      <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-4 top-2 bg-[#171923] border border-white/10 rounded-xl shadow-xl flex items-center p-1 gap-1 z-10 mc-glass">
         <button
           onClick={handleCopyText}
-          className="p-1 text-teams-muted hover:text-white rounded hover:bg-teams-hover flex items-center gap-1 text-[10px]"
+          className="p-1.5 text-mc-muted hover:text-white rounded-lg hover:bg-white/5 flex items-center gap-1 text-[10px]"
           title="Copy message text"
         >
           {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -152,18 +247,18 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
         <div className="relative">
           <button
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-1 text-teams-muted hover:text-white rounded hover:bg-teams-hover"
+            className="p-1.5 text-mc-muted hover:text-white rounded-lg hover:bg-white/5"
             title="Add reaction"
           >
             <Smile className="w-3.5 h-3.5" />
           </button>
           {showEmojiPicker && (
-            <div className="absolute right-0 top-7 bg-[#202020] border border-teams-border rounded-lg shadow-xl p-1.5 flex gap-1 z-20">
+            <div className="absolute right-0 top-8 bg-[#171923] border border-white/10 rounded-xl shadow-2xl p-1.5 flex gap-1 z-20 mc-glass">
               {QUICK_EMOJIS.map((emoji) => (
                 <button
                   key={emoji}
                   onClick={() => handleToggleReaction(emoji)}
-                  className="p-1 hover:bg-teams-hover rounded text-sm transition-transform hover:scale-125"
+                  className="p-1.5 hover:bg-white/5 rounded-lg text-sm transition-transform hover:scale-125"
                 >
                   {emoji}
                 </button>
@@ -172,21 +267,21 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
           )}
         </div>
 
-        {isOwner && (
+        {canEditOrDelete && (
           <>
             <button
               onClick={() => {
                 setEditContent(message.content);
                 setIsEditing(true);
               }}
-              className="p-1 text-teams-muted hover:text-white rounded hover:bg-teams-hover"
+              className="p-1.5 text-mc-muted hover:text-white rounded-lg hover:bg-white/5"
               title="Edit message"
             >
               <Edit2 className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={handleDelete}
-              className="p-1 text-rose-400 hover:bg-rose-500/20 rounded"
+              className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
               title="Delete message"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -194,6 +289,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
           </>
         )}
       </div>
+
+      <DeleteMessageModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleConfirmDelete}
+        isAdmin={!!isAdmin}
+        itemType="message"
+      />
     </div>
   );
 };

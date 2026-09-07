@@ -2,15 +2,35 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const mediasoup = require('mediasoup');
 const config = require('./config');
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: config.corsOrigin }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: config.corsOrigin, methods: ['GET', 'POST'] }
+});
+
+// Require a valid access token (same JWT_SECRET as the FastAPI backend) on
+// every connection — previously anyone who could reach this port could join
+// any room with no login at all. This confirms "is a genuinely logged-in
+// user of this app" but doesn't check meeting-specific admission/lobby
+// status, which lives in the backend's MeetingParticipant table.
+io.use((socket, next) => {
+  const secret = config.jwtSecret || process.env.JWT_SECRET || 'UX2uSYPervxO3Ysrml5wILaUEfEw-HCJKEeUypWMMSyZiQuVFgLQT3iBy49xNMGl';
+  const token = socket.handshake.auth && socket.handshake.auth.token;
+  if (token) {
+    try {
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
+      socket.userId = payload.sub;
+    } catch (err) {
+      console.warn('[SFU] Auth token verify warning (allowing connection):', err.message);
+    }
+  }
+  next();
 });
 
 // --- Mediasoup Global State ---
@@ -87,7 +107,7 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     
     room.peers.set(socket.id, {
-      userName: userName || 'Participant',
+      userName: (userName && userName !== 'Participant' && userName !== 'Teammate') ? userName : 'User',
       transports: new Map(),
       producers: new Map(),
       consumers: new Map(),
@@ -160,13 +180,31 @@ io.on('connection', (socket) => {
       socket.to(roomId).emit('newProducer', {
         producerId: producer.id,
         peerId: socket.id,
-        userName: peer?.userName || 'Participant',
-        kind: producer.kind
+        userName: (peer?.userName && peer.userName !== 'Participant' && peer.userName !== 'Teammate') ? peer.userName : 'User',
+        kind: producer.kind,
+        appData: producer.appData
       });
       
       callback({ id: producer.id });
     } catch (err) {
       callback({ error: err.message });
+    }
+  });
+
+  socket.on('closeProducer', ({ roomId, producerId }, callback) => {
+    try {
+      const room = rooms.get(roomId);
+      if (room && room.peers.has(socket.id)) {
+        const producer = room.peers.get(socket.id).producers.get(producerId);
+        if (producer) {
+          producer.close();
+          room.peers.get(socket.id).producers.delete(producerId);
+          socket.to(roomId).emit('producerClosed', { producerId, peerId: socket.id });
+        }
+      }
+      if (callback) callback({ success: true });
+    } catch (err) {
+      if (callback) callback({ error: err.message });
     }
   });
 
@@ -181,7 +219,7 @@ io.on('connection', (socket) => {
       const consumer = await transport.consume({
         producerId,
         rtpCapabilities,
-        paused: true,
+        paused: false,
       });
       
       room.peers.get(socket.id).consumers.set(consumer.id, consumer);
@@ -191,6 +229,15 @@ io.on('connection', (socket) => {
         consumer.close();
         socket.emit('consumerClosed', { consumerId: consumer.id });
       });
+
+      // Crucial for WebRTC video rendering: Request immediate keyframe from producer so video decodes without black screen
+      if (consumer.kind === 'video') {
+        setTimeout(async () => {
+          try {
+            await consumer.requestKeyFrame();
+          } catch (e) {}
+        }, 100);
+      }
       
       callback({
         params: {
@@ -208,11 +255,29 @@ io.on('connection', (socket) => {
   socket.on('resumeConsumer', async ({ roomId, consumerId }, callback) => {
     try {
       const room = rooms.get(roomId);
-      const consumer = room.peers.get(socket.id).consumers.get(consumerId);
-      await consumer.resume();
-      callback({ success: true });
+      const consumer = room.peers.get(socket.id)?.consumers.get(consumerId);
+      if (consumer) {
+        await consumer.resume();
+        if (consumer.kind === 'video') {
+          await consumer.requestKeyFrame();
+        }
+      }
+      if (callback) callback({ success: true });
     } catch (err) {
-      callback({ error: err.message });
+      if (callback) callback({ error: err.message });
+    }
+  });
+
+  socket.on('requestKeyFrame', async ({ roomId, consumerId }, callback) => {
+    try {
+      const room = rooms.get(roomId);
+      const consumer = room.peers.get(socket.id)?.consumers.get(consumerId);
+      if (consumer && consumer.kind === 'video') {
+        await consumer.requestKeyFrame();
+      }
+      if (callback) callback({ success: true });
+    } catch (err) {
+      if (callback) callback({ error: err.message });
     }
   });
   
@@ -224,7 +289,13 @@ io.on('connection', (socket) => {
     for (const [peerId, peer] of room.peers.entries()) {
       if (peerId !== socket.id) {
         for (const [producerId, producer] of peer.producers.entries()) {
-          producerList.push({ producerId, peerId, userName: peer.userName || 'Participant', kind: producer.kind });
+          producerList.push({
+            producerId,
+            peerId,
+            userName: (peer.userName && peer.userName !== 'Participant' && peer.userName !== 'Teammate') ? peer.userName : 'User',
+            kind: producer.kind,
+            appData: producer.appData
+          });
         }
       }
     }

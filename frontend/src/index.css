@@ -3,17 +3,50 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --mc-base: #0B0D12;
+    --mc-surface: #11131A;
+    --mc-elevated: #171923;
+    --mc-overlay: #1E2130;
+    --mc-border: rgba(255, 255, 255, 0.08);
+    --mc-text: #F4F5F7;
+    --mc-secondary: #9AA3B8;
+    --mc-muted: #697386;
+    --mc-indigo: #4F46E5;
+    --mc-violet: #7C3AED;
+    --mc-cyan: #06B6D4;
+  }
+
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    background-color: #181818;
-    color: #F5F5F5;
+    background-color: var(--mc-base);
+    color: var(--mc-text);
+    letter-spacing: -0.01em;
   }
 }
 
-/* Custom Scrollbars for Microsoft Teams Aesthetic */
+/* Precise Text Selection */
+.select-text, .message-text-content, textarea, input, p.selectable-text, span.selectable-text, .chat-messages-container, .chat-messages-container p, .chat-messages-container span, .chat-messages-container div {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+}
+
+button, svg, img {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+}
+
+::selection {
+  background-color: #6366F1 !important;
+  color: #FFFFFF !important;
+}
+
+/* Micropro_Commute Custom Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -21,135 +54,399 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #424242;
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #5B5FC7;
+  background: rgba(99, 102, 241, 0.5);
+}
+
+/* Glassmorphism & Backdrop Effects */
+.mc-glass {
+  background: rgba(17, 19, 26, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mc-glass-pill {
+  background: rgba(23, 25, 35, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mc-glow-primary {
+  box-shadow: 0 0 24px -4px rgba(99, 102, 241, 0.35);
+}
+
+/* Professional Gradient Text Classes (Dark Mode Default) */
+.mc-brand-gradient {
+  background: linear-gradient(135deg, #6366F1, #8B5CF6, #EC4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.mc-header-title-gradient {
+  background: linear-gradient(135deg, #FFFFFF, #E0E7FF, #A5B4FC);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.activity-card-unread {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.18) 0%, rgba(124, 58, 237, 0.12) 50%, #171923 100%);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+.activity-card-read {
+  background: #11131A;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* ==========================================================================
-   AUTHENTIC MICROSOFT TEAMS LIGHT MODE DESIGN SYSTEM
+   MICROPRO_COMMUTE QUIETLY PREMIUM LIGHT GRADIENT THEME ENGINE
    ========================================================================== */
+html.light-mode {
+  --mc-base: #EEF2FF;
+  --mc-surface: #F8FAFC;
+  --mc-elevated: #F1F5F9;
+  --mc-overlay: #E2E8F0;
+  --mc-border: rgba(99, 102, 241, 0.15);
+  --mc-text: #0F172A;
+  --mc-secondary: #475569;
+  --mc-muted: #64748B;
+}
+
 html.light-mode body {
-  background-color: #F0F2F5 !important;
-  color: #1F2328 !important;
+  background: linear-gradient(135deg, #F1F5F9 0%, #EEF2FF 50%, #F8FAFC 100%) !important;
+  color: #0F172A !important;
 }
 
-/* 1. App Rail & Left Navigation */
-html.light-mode aside,
-html.light-mode .bg-\[\#202023\] {
-  background-color: #EBECEF !important;
-  border-color: #D8D9E0 !important;
+/* App Rail, Nav Bars & Header Shell Surfaces */
+html.light-mode header {
+  background: linear-gradient(90deg, #FFFFFF 0%, #F8FAFC 50%, #EEF2FF 100%) !important;
+  border-color: rgba(99, 102, 241, 0.12) !important;
+  color: #0F172A !important;
 }
 
-/* 2. Top Header & Sub-headers */
-html.light-mode header,
-html.light-mode .bg-\[\#1B1B1C\],
+html.light-mode aside {
+  background: linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%) !important;
+  border-color: rgba(99, 102, 241, 0.12) !important;
+  color: #0F172A !important;
+}
+
+/* Modals & Dialog Boxes in Light Mode */
+html.light-mode .fixed.inset-0 > div > div,
+html.light-mode .fixed.inset-0 .bg-\[\#252525\],
+html.light-mode .fixed.inset-0 .bg-\[\#202021\],
+html.light-mode .fixed.inset-0 .bg-\[\#242426\],
+html.light-mode .fixed.inset-0 .bg-\[\#1F1F1F\],
+html.light-mode .fixed.inset-0 .bg-\[\#171923\],
+html.light-mode .fixed.inset-0 .bg-\[\#11131A\] {
+  background: linear-gradient(145deg, #FFFFFF 0%, #EEF2FF 100%) !important;
+  border: 1px solid rgba(99, 102, 241, 0.2) !important;
+  color: #0F172A !important;
+  box-shadow: 0 20px 40px -10px rgba(99, 102, 241, 0.15), 0 0 15px rgba(99, 102, 241, 0.05) !important;
+}
+
+/* Modal Headers & Sub-footers */
+html.light-mode .fixed.inset-0 .bg-\[\#1A1A1A\],
+html.light-mode .fixed.inset-0 .bg-\[\#181819\],
+html.light-mode .fixed.inset-0 .bg-\[\#28282B\],
+html.light-mode .fixed.inset-0 .bg-\[\#252526\],
+html.light-mode .fixed.inset-0 .bg-\[\#11131A\] {
+  background: linear-gradient(90deg, #F8FAFC 0%, #EEF2FF 100%) !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  color: #0F172A !important;
+}
+
+/* Main Workspace Canvas & Panel Surfaces (Chats, Channels, Calendar, Calls) */
+html.light-mode .bg-\[\#0B0D12\],
+html.light-mode .bg-\[\#181818\] {
+  background: linear-gradient(135deg, #F1F5F9 0%, #EEF2FF 50%, #F8FAFC 100%) !important;
+}
+
+html.light-mode .bg-\[\#11131A\],
+html.light-mode .bg-\[\#171923\],
 html.light-mode .bg-\[\#1F1F1F\],
-html.light-mode .bg-\[\#1C1C1D\] {
-  background-color: #FFFFFF !important;
-  border-color: #E1E2E8 !important;
-  color: #1F2328 !important;
-}
-
-/* 3. Main Workspace Containers */
-html.light-mode .bg-\[\#181818\],
+html.light-mode .bg-\[\#1C1C1D\],
 html.light-mode .bg-\[\#141414\],
-html.light-mode .bg-\[\#161616\] {
-  background-color: #F8F9FA !important;
+html.light-mode .bg-\[\#151518\],
+html.light-mode .bg-\[\#18181C\],
+html.light-mode .bg-\[\#141417\],
+html.light-mode .bg-\[\#1B1B20\],
+html.light-mode .bg-\[\#1E1E22\],
+html.light-mode .bg-\[\#111114\],
+html.light-mode .bg-black {
+  background: linear-gradient(145deg, #FFFFFF 0%, #F8FAFC 100%) !important;
+  border-color: rgba(99, 102, 241, 0.12) !important;
+  color: #0F172A !important;
 }
 
-/* 4. Cards, Containers, Tables & Modals */
-html.light-mode .bg-\[\#1F1F1F\],
-html.light-mode .bg-\[\#202021\],
-html.light-mode .bg-\[\#242426\],
-html.light-mode .bg-\[\#252525\],
-html.light-mode .bg-\[\#252526\] {
-  background-color: #FFFFFF !important;
-  border-color: #E1E2E8 !important;
-}
-
-/* 5. Inner List Items, Rows & Badges */
-html.light-mode .bg-\[\#181819\],
-html.light-mode .bg-\[\#252528\],
+/* Selected Items, Hover States, List Items across all components */
 html.light-mode .bg-\[\#28282B\],
-html.light-mode .bg-\[\#29292B\],
-html.light-mode .bg-\[\#2A2A2B\],
-html.light-mode .bg-\[\#2E2E32\] {
-  background-color: #F3F4F6 !important;
-  border-color: #E5E7EB !important;
-  color: #1F2328 !important;
-}
-
-/* 6. Hover States in Light Mode */
-html.light-mode tr:hover,
-html.light-mode .hover\:bg-\[\#252528\]:hover,
-html.light-mode .hover\:bg-teams-hover:hover,
+html.light-mode .bg-\[\#252526\],
+html.light-mode .bg-\[\#222225\],
+html.light-mode .bg-\[\#262626\],
+html.light-mode .bg-\[\#222226\],
+html.light-mode .bg-\[\#2A2A30\],
 html.light-mode .hover\:bg-\[\#28282B\]:hover,
-html.light-mode .hover\:bg-\[\#1F1F1F\]:hover,
-html.light-mode .hover\:bg-\[\#242426\]:hover {
-  background-color: #EAECEF !important;
+html.light-mode .hover\:bg-teams-hover:hover,
+html.light-mode .hover\:bg-white\/5:hover,
+html.light-mode .hover\:bg-\[\#2A2A30\]:hover {
+  background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%) !important;
+  color: #0F172A !important;
+  border-color: rgba(99, 102, 241, 0.2) !important;
 }
 
-html.light-mode tr:hover *,
-html.light-mode .hover\:bg-\[\#252528\]:hover * {
-  color: #1F2328 !important;
+/* Universal Text Contrast Enforcement in Light Mode */
+html.light-mode h1:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode h2:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode h3:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode h4:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode h5:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode h6:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode p:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode label:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode .text-mc-text:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode .text-white:not(button *):not(.badge-gradient):not(.bg-gradient-to-r *):not(.dark-panel *) {
+  color: #0F172A !important;
 }
 
-/* 7. Typography */
-html.light-mode .text-white {
-  color: #1F2328 !important;
+html.light-mode .text-mc-secondary:not(.bg-gradient-to-r *):not(.dark-panel *),
+html.light-mode .text-teams-muted:not(.bg-gradient-to-r *):not(.dark-panel *) {
+  color: #475569 !important;
 }
 
-html.light-mode .text-teams-muted {
-  color: #57606A !important;
+html.light-mode .text-mc-muted:not(.bg-gradient-to-r *):not(.dark-panel *) {
+  color: #64748B !important;
 }
 
-html.light-mode .text-teams-text {
-  color: #24292F !important;
+/* Gradient Adjustments for Light Mode Header Titles */
+html.light-mode .mc-brand-gradient {
+  background: linear-gradient(135deg, #1E1B4B, #4338CA, #6D28D9) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
 }
 
-/* 8. Table Headers */
-html.light-mode thead,
-html.light-mode thead tr,
-html.light-mode thead th,
-html.light-mode .bg-\[\#242426\] {
-  background-color: #F3F4F6 !important;
-  color: #4B5563 !important;
-  border-color: #E1E2E8 !important;
+html.light-mode .mc-header-title-gradient {
+  background: linear-gradient(135deg, #0F172A, #312E81, #4338CA) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
 }
 
-/* 9. Inputs & Search Boxes */
-html.light-mode input[type="text"],
-html.light-mode input[type="search"],
-html.light-mode textarea {
-  background-color: #F3F4F6 !important;
-  color: #1F2328 !important;
-  border-color: #D0D7DE !important;
+/* Activity Feed Unread / Read Cards */
+html.light-mode .activity-card-unread {
+  background: linear-gradient(135deg, #EEF2FF 0%, #F5F3FF 60%, #FFFFFF 100%) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+  box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.08) !important;
+}
+
+/* Preserve Dark Brand Panel & Media Overlays Contrast across all modes */
+.dark-panel,
+.dark-panel *,
+[data-theme-preserve="dark"],
+[data-theme-preserve="dark"] * {
+  color: #FFFFFF !important;
+}
+
+html.light-mode .dark-panel,
+html.light-mode [data-theme-preserve="dark"] {
+  background: rgba(15, 23, 42, 0.85) !important;
+  color: #FFFFFF !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+html.light-mode .dark-panel h1,
+html.light-mode .dark-panel h2,
+html.light-mode .dark-panel h3,
+html.light-mode .dark-panel h4,
+html.light-mode .dark-panel p,
+html.light-mode .dark-panel span,
+html.light-mode .dark-panel div,
+html.light-mode .dark-panel label,
+html.light-mode [data-theme-preserve="dark"] h1,
+html.light-mode [data-theme-preserve="dark"] h2,
+html.light-mode [data-theme-preserve="dark"] h3,
+html.light-mode [data-theme-preserve="dark"] h4,
+html.light-mode [data-theme-preserve="dark"] p,
+html.light-mode [data-theme-preserve="dark"] span,
+html.light-mode [data-theme-preserve="dark"] div,
+html.light-mode [data-theme-preserve="dark"] label {
+  color: #F4F5F7 !important;
+}
+
+html.light-mode .dark-panel .text-white,
+html.light-mode [data-theme-preserve="dark"] .text-white {
+  color: #FFFFFF !important;
+}
+
+html.light-mode .dark-panel .text-mc-secondary,
+html.light-mode [data-theme-preserve="dark"] .text-mc-secondary {
+  color: #9AA3B8 !important;
+}
+
+html.light-mode .dark-panel .text-mc-muted,
+html.light-mode [data-theme-preserve="dark"] .text-mc-muted {
+  color: #697386 !important;
+}
+
+html.light-mode .dark-panel .text-indigo-400,
+html.light-mode [data-theme-preserve="dark"] .text-indigo-400 {
+  color: #818CF8 !important;
+}
+
+html.light-mode .dark-panel .text-emerald-400,
+html.light-mode [data-theme-preserve="dark"] .text-emerald-400 {
+  color: #34D399 !important;
+}
+
+html.light-mode .dark-panel .text-amber-400,
+html.light-mode [data-theme-preserve="dark"] .text-amber-400 {
+  color: #FBBF24 !important;
+}
+
+html.light-mode .dark-panel .text-cyan-400,
+html.light-mode [data-theme-preserve="dark"] .text-cyan-400 {
+  color: #22D3EE !important;
+}
+
+/* Call Overlay & Side Panel Light Mode Theme Surface Fixes */
+html.light-mode .bg-\[\#18181C\],
+html.light-mode .bg-\[\#151518\] {
+  background: #FFFFFF !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  color: #0F172A !important;
+  box-shadow: 0 10px 30px -5px rgba(99, 102, 241, 0.1) !important;
+}
+
+html.light-mode .bg-\[\#1E1E22\] {
+  background: #F8FAFC !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  color: #0F172A !important;
+}
+
+html.light-mode .bg-\[\#222228\] {
+  background: #EEF2FF !important;
+  border-color: rgba(99, 102, 241, 0.2) !important;
+  color: #0F172A !important;
+}
+
+html.light-mode .bg-\[\#222228\] p,
+html.light-mode .bg-\[\#222228\] span:not(.text-teams-purple) {
+  color: #0F172A !important;
+}
+
+html.light-mode .bg-\[\#222228\] .text-teams-purple {
+  color: #4F46E5 !important;
+  font-weight: 700 !important;
+}
+
+html.light-mode .bg-\[\#141416\] {
+  background: #FFFFFF !important;
+  border-color: rgba(99, 102, 241, 0.25) !important;
+  color: #0F172A !important;
+}
+
+html.light-mode .bg-\[\#222226\] {
+  background: #F1F5F9 !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  color: #0F172A !important;
+}
+
+html.light-mode .bg-\[\#222226\]:hover {
+  background: #E2E8F0 !important;
+}
+
+html.light-mode .bg-\[\#222226\] span,
+html.light-mode .bg-\[\#222226\] svg:not(.text-[#6366F1]) {
+  color: #0F172A !important;
+}
+
+html.light-mode .bg-\[\#1C1C20\] {
+  background: #F1F5F9 !important;
+  color: #64748B !important;
+}
+
+
+html.light-mode .border-white\/5,
+html.light-mode .border-white\/10,
+html.light-mode .border-teams-border {
+  border-color: rgba(99, 102, 241, 0.15) !important;
+}
+
+/* Input Fields & Textareas in Light Mode */
+html.light-mode input,
+html.light-mode textarea,
+html.light-mode select {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%) !important;
+  color: #0F172A !important;
+  border: 1px solid rgba(99, 102, 241, 0.25) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important;
 }
 
 html.light-mode input::placeholder,
 html.light-mode textarea::placeholder {
-  color: #8C8C8C !important;
+  color: #94A3B8 !important;
 }
 
-/* 10. Borders */
-html.light-mode .border-teams-border,
-html.light-mode .border-\[\#2B2B2C\],
-html.light-mode .border-\[\#333335\],
-html.light-mode .border-\[\#2C2C2E\],
-html.light-mode .divide-teams-border > :not([hidden]) ~ :not([hidden]) {
-  border-color: #E1E2E8 !important;
+html.light-mode .mc-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(238, 242, 255, 0.9) 100%) !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  color: #0F172A !important;
 }
 
-/* 11. Preserved Purple Accent Elements */
-html.light-mode .bg-teams-purple {
-  background-color: #5B5FC7 !important;
+html.light-mode .mc-glass-pill {
+  background: linear-gradient(135deg, rgba(241, 245, 249, 0.95) 0%, rgba(238, 242, 255, 0.9) 100%) !important;
+  border-color: rgba(99, 102, 241, 0.15) !important;
+  color: #0F172A !important;
 }
 
-html.light-mode .bg-teams-purple.text-white,
-html.light-mode .bg-teams-purple.text-white * {
+/* Action Buttons & White Text Protection for Gradient Bubbles & Badges */
+html.light-mode .bg-gradient-to-r:not(.bg-clip-text),
+html.light-mode .bg-gradient-to-r:not(.bg-clip-text) *:not(.bg-clip-text),
+html.light-mode .bg-gradient-to-tr:not(.bg-clip-text),
+html.light-mode .bg-gradient-to-tr:not(.bg-clip-text) *:not(.bg-clip-text),
+html.light-mode button.bg-gradient-to-r,
+html.light-mode button.bg-gradient-to-r *,
+html.light-mode button.bg-indigo-600,
+html.light-mode button.bg-indigo-600 *,
+html.light-mode button.bg-emerald-600,
+html.light-mode button.bg-emerald-600 *,
+html.light-mode .badge-gradient,
+html.light-mode .badge-gradient * {
   color: #FFFFFF !important;
 }
+
+html.light-mode .mc-header-brand-title {
+  background: linear-gradient(135deg, #1E1B4B 0%, #4338CA 50%, #6D28D9 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+}
+
+/* Toast Notification High Contrast Protection */
+html.light-mode .pointer-events-auto.bg-\[\#1A1C23\],
+html.light-mode .pointer-events-auto.bg-\[\#1A1C23\] h4 {
+  color: #FFFFFF !important;
+}
+html.light-mode .pointer-events-auto.bg-\[\#1A1C23\] p {
+  color: #E2E8F0 !important;
+}
+
+/* Media Vault & Recording Player Visibility Protection */
+html.light-mode .bg-\[\#14161F\],
+html.light-mode .bg-\[\#181A24\],
+html.light-mode .bg-\[\#141620\] {
+  background-color: #181A24 !important;
+  color: #FFFFFF !important;
+}
+html.light-mode .bg-\[\#181A24\] span,
+html.light-mode .bg-\[\#181A24\] button,
+html.light-mode .bg-\[\#141620\] h3,
+html.light-mode .bg-\[\#141620\] span {
+  color: #FFFFFF !important;
+}
+

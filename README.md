@@ -6,8 +6,18 @@ MicroproTeams is a production-grade, enterprise collaboration and communication 
 
 ## 🚀 Quick Start
 
-### Option 1: Zero-Dependency Local Runner (Host Execution)
-Runs the backend, seeds initial demo data, builds frontend assets, and launches development servers:
+### Option 1: Standalone Runner Scripts (Separate Terminal Execution)
+- **Backend & SFU Services**:
+```bash
+./run-backend.sh
+```
+- **Frontend SPA**:
+```bash
+./run-frontend.sh
+```
+
+### Option 2: Full Unified Runner
+Runs backend, seeds demo data, and launches frontend dev server:
 ```bash
 ./run-local.sh
 ```

@@ -2,7 +2,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.repositories.message_repository import MessageRepository
-from app.models.models import Message, MessageType, PinnedMessage, Notification, User, DirectConversationMember
+from app.models.models import Message, MessageType, PinnedMessage, User, DirectConversationMember, UserMessageDeletion
 from app.core.websocket import ws_manager
 from app.services.authorization_service import AuthorizationService
 
@@ -35,6 +35,19 @@ class MessageService:
         sender_obj = m.__dict__.get("sender")
         reactions_list = m.__dict__.get("reactions", [])
         replies_list = m.__dict__.get("replies", [])
+        attachments_list = m.__dict__.get("attachments", [])
+
+        formatted_attachments = []
+        if attachments_list:
+            for att in attachments_list:
+                formatted_attachments.append({
+                    "id": str(att.id),
+                    "name": att.display_name,
+                    "url": getattr(att, "file_url", None) or getattr(att, "url", ""),
+                    "type": getattr(att, "mime_type", None),
+                    "size": getattr(att, "size", None),
+                    "file_id": str(att.file_id) if getattr(att, "file_id", None) else None
+                })
 
         return {
             "id": str(m.id),
@@ -45,8 +58,11 @@ class MessageService:
             "parent_message_id": str(m.parent_message_id) if m.parent_message_id else None,
             "message_type": m.message_type,
             "content": m.content,
+            "attachments": formatted_attachments,
             "is_edited": m.is_edited,
             "is_pinned": m.is_pinned,
+            "is_read": getattr(m, "is_read", False),
+            "read_at": m.read_at.isoformat() if getattr(m, "read_at", None) else None,
             "created_at": m.created_at.isoformat() if m.created_at else None,
             "sender": {
                 "id": str(sender_obj.id),
@@ -67,8 +83,14 @@ class MessageService:
             "replies_count": len(replies_list) if replies_list else 0
         }
 
-    async def get_channel_messages(self, channel_id: str, limit: int = 50) -> List[dict]:
+    async def get_channel_messages(self, channel_id: str, limit: int = 300, current_user: Optional[User] = None) -> List[dict]:
         messages = await self.repo.get_channel_messages(channel_id, limit)
+        if current_user:
+            del_res = await self.db.execute(
+                select(UserMessageDeletion.message_id).where(UserMessageDeletion.user_id == current_user.id)
+            )
+            deleted_ids = set(del_res.scalars().all())
+            messages = [m for m in messages if m.id not in deleted_ids]
         return [self.format_message(m) for m in messages]
 
     async def get_replies(self, parent_id: str, current_user: User) -> List[dict]:
@@ -87,7 +109,8 @@ class MessageService:
         parent_message_id: Optional[str] = None,
         message_type: MessageType = MessageType.TEXT,
         client_message_id: Optional[str] = None,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        attachments: Optional[List[dict]] = None
     ) -> dict:
         # Idempotency check
         if client_message_id:
@@ -111,8 +134,47 @@ class MessageService:
             message_type=message_type,
             client_message_id=client_message_id
         )
-        created = await self.repo.create(msg)
-        formatted = self.format_message(created)
+        self.db.add(msg)
+        await self.db.commit()
+        await self.db.refresh(msg)
+
+        if attachments:
+            from app.models.models import MessageAttachment, FileRecord
+            for att in attachments:
+                att_name = att.get("name") if isinstance(att, dict) else getattr(att, "name", "Attachment")
+                att_url = att.get("url") if isinstance(att, dict) else getattr(att, "url", None)
+                att_type = att.get("type") if isinstance(att, dict) else getattr(att, "type", None)
+                att_size = att.get("size") if isinstance(att, dict) else getattr(att, "size", None)
+                att_file_id = att.get("file_id") if isinstance(att, dict) else getattr(att, "file_id", None)
+                
+                f_bytes = None
+                b64_val = None
+                if att_file_id:
+                    try:
+                        f_res = await self.db.execute(select(FileRecord).where(FileRecord.id == att_file_id))
+                        f_rec = f_res.scalars().first()
+                        if f_rec:
+                            f_bytes = f_rec.file_data
+                            b64_val = f_rec.base64_data
+                    except Exception:
+                        pass
+
+                att_obj = MessageAttachment(
+                    message_id=msg.id,
+                    display_name=att_name or "Attachment",
+                    file_url=att_url,
+                    mime_type=att_type,
+                    size=att_size,
+                    file_id=att_file_id,
+                    file_data=f_bytes,
+                    base64_data=b64_val,
+                    sort_order="0"
+                )
+                self.db.add(att_obj)
+            await self.db.commit()
+
+        full_msg = await self.repo.get_by_id(msg.id)
+        formatted = self.format_message(full_msg or msg)
 
         # Broadcast via WebSocket to channel members
         if channel_id:
@@ -144,11 +206,17 @@ class MessageService:
 
     async def delete_message(self, message_id: str, current_user: User) -> bool:
         msg = await self.repo.get_by_id(message_id)
-        if not msg or str(msg.sender_id) != str(current_user.id):
+        if not msg:
             return False
+
+        is_admin = getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_superuser', False) or getattr(current_user, 'role', '') in ('ADMIN', 'ORG_ADMIN')
+        if str(msg.sender_id) != str(current_user.id) and not is_admin:
+            return False
+
         await self._ensure_can_access_message(msg, current_user)
 
         channel_id = str(msg.channel_id) if msg.channel_id else None
+        conv_id = str(msg.conversation_id) if msg.conversation_id else None
         await self.repo.delete(msg)
 
         if channel_id:
@@ -156,6 +224,15 @@ class MessageService:
                 "type": "message.delete",
                 "message_id": message_id
             })
+        elif conv_id:
+            mem_res = await self.db.execute(select(DirectConversationMember.user_id).where(DirectConversationMember.conversation_id == conv_id))
+            member_user_ids = [str(uid) for uid in mem_res.scalars().all()]
+            for target_user_id in member_user_ids:
+                await ws_manager.send_personal_message(target_user_id, {
+                    "type": "direct_message.delete",
+                    "conversation_id": conv_id,
+                    "message_id": message_id
+                })
 
         return True
 

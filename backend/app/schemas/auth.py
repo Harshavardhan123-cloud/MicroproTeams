@@ -1,6 +1,5 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
-from uuid import UUID
 
 class Token(BaseModel):
     access_token: str
@@ -23,6 +22,7 @@ class RegisterRequest(BaseModel):
     last_name: str
     organization_name: str
     username: str
+    otp_code: Optional[str] = None
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str

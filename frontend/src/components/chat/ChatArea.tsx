@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Hash, Lock, Users, Search, Bell, Pin } from 'lucide-react';
+import { Hash, Lock, Users, Pin } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { Message } from '../../types';
 import { apiClient } from '../../api/client';
@@ -35,7 +35,6 @@ export const ChatArea: React.FC = () => {
     }
   };
 
-  // Real-time WebSocket integration
   useWebSocket(selectedChannel?.id, (event) => {
     if (event.type === 'message.new' && event.message?.channel_id === selectedChannel?.id) {
       setMessages((prev) => {
@@ -75,72 +74,74 @@ export const ChatArea: React.FC = () => {
 
   if (!selectedChannel) {
     return (
-      <div className="flex-1 bg-[#181818] flex items-center justify-center text-teams-muted">
-        <div className="text-center space-y-2">
-          <Hash className="w-10 h-10 mx-auto text-teams-purple/60 animate-pulse" />
-          <p className="font-semibold text-sm text-white">No Channel Selected</p>
-          <p className="text-xs">Select a team and channel from the sidebar to view conversations.</p>
+      <div className="flex-1 bg-[#0B0D12] flex items-center justify-center text-mc-muted">
+        <div className="text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center mx-auto">
+            <Hash className="w-6 h-6 animate-pulse" />
+          </div>
+          <p className="font-bold text-sm text-white font-display">No Channel Selected</p>
+          <p className="text-xs text-mc-secondary max-w-xs">Select a workspace team and channel from the sidebar to view discussions.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex h-full overflow-hidden bg-[#181818]">
+    <div className="flex-1 flex h-full overflow-hidden bg-[#0B0D12]">
       {/* Main Channel Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Channel Header Bar */}
-        <div className="h-14 bg-[#1F1F1F] border-b border-teams-border flex items-center justify-between px-6 shrink-0 z-10 shadow-sm">
+        <div className="h-12 bg-[#11131A] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-3">
             {selectedChannel.type === 'private' ? (
-              <Lock className="w-5 h-5 text-amber-400" />
+              <Lock className="w-4 h-4 text-amber-400" />
             ) : (
-              <Hash className="w-5 h-5 text-teams-purple" />
+              <Hash className="w-4 h-4 text-indigo-400" />
             )}
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-bold text-sm text-white">{selectedChannel.name}</h2>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-teams-purple/20 text-teams-accent font-semibold uppercase">
+                <h2 className="font-bold text-xs text-white font-display">{selectedChannel.name}</h2>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-600/20 text-indigo-300 font-medium">
                   {selectedTeam?.name}
                 </span>
               </div>
               {selectedChannel.description && (
-                <p className="text-[11px] text-teams-muted truncate max-w-md">{selectedChannel.description}</p>
+                <p className="text-[11px] text-mc-muted truncate max-w-md">{selectedChannel.description}</p>
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button className="p-1.5 text-teams-muted hover:text-white rounded hover:bg-teams-hover" title="Pinned Messages">
+          <div className="flex items-center gap-1">
+            <button className="p-1.5 text-mc-secondary hover:text-white rounded-lg hover:bg-white/5 transition-colors" title="Pinned Messages">
               <Pin className="w-4 h-4" />
             </button>
-            <button className="p-1.5 text-teams-muted hover:text-white rounded hover:bg-teams-hover" title="Channel Members">
+            <button className="p-1.5 text-mc-secondary hover:text-white rounded-lg hover:bg-white/5 transition-colors" title="Channel Members">
               <Users className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Channel Messages Timeline */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="flex-1 overflow-y-auto p-4 space-y-1">
           {isLoading ? (
             <div className="space-y-4 p-4">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
-                  <div className="w-8 h-8 rounded-full bg-[#2A2A2A]" />
+                  <div className="w-8 h-8 rounded-full bg-white/10" />
                   <div className="flex-1 space-y-2">
-                    <div className="w-32 h-3 bg-[#2A2A2A] rounded" />
-                    <div className="w-full h-4 bg-[#2A2A2A] rounded" />
+                    <div className="w-32 h-3 bg-white/10 rounded" />
+                    <div className="w-full h-4 bg-white/10 rounded" />
                   </div>
                 </div>
               ))}
             </div>
           ) : messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-teams-muted text-center p-8">
-              <div className="w-12 h-12 rounded-2xl bg-teams-purple/20 text-teams-purple flex items-center justify-center mb-3 font-bold text-xl">
+            <div className="h-full flex flex-col items-center justify-center text-mc-muted text-center p-8">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-600 text-white flex items-center justify-center mb-3 font-black text-xl shadow-lg shadow-indigo-600/30">
                 #
               </div>
-              <h3 className="font-bold text-base text-white mb-1">Welcome to #{selectedChannel.name}!</h3>
-              <p className="text-xs max-w-sm">This is the start of the #{selectedChannel.name} channel. Send a message to start collaboration.</p>
+              <h3 className="font-bold text-base text-white mb-1 font-display">Start of #{selectedChannel.name}</h3>
+              <p className="text-xs text-mc-secondary max-w-sm">This is the beginning of the #{selectedChannel.name} channel conversation.</p>
             </div>
           ) : (
             messages.map((msg) => (
@@ -157,13 +158,13 @@ export const ChatArea: React.FC = () => {
 
         {/* Typing Indicator */}
         {typingUsers.size > 0 && (
-          <div className="px-6 py-1 text-[11px] text-teams-accent italic animate-pulse">
+          <div className="px-6 py-1 text-[11px] text-indigo-400 italic animate-pulse">
             Someone is typing...
           </div>
         )}
 
         {/* Message Input Composer */}
-        <div className="p-4 bg-[#181818] border-t border-teams-border/50 shrink-0">
+        <div className="p-4 bg-[#0B0D12] border-t border-white/5 shrink-0">
           <MessageComposer
             channelId={selectedChannel.id}
             placeholder={`Message #${selectedChannel.name}`}
