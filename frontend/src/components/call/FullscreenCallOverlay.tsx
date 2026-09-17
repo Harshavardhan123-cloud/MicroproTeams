@@ -1690,7 +1690,7 @@ export const FullscreenCallOverlay: React.FC = () => {
       ) : null}
 
       {/* Bottom Control Bar */}
-      <div className="mt-4 flex items-center justify-between bg-[#151518] border border-teams-border/50 rounded-2xl px-6 py-3 shrink-0 z-20">
+      <div className="mt-4 flex items-center justify-between gap-4 shrink-0 z-20">
         <div className="flex items-center gap-3">
           {callState === 'active' && (
             <>

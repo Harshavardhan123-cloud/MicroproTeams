@@ -159,14 +159,15 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ meetingId, onLeave, is
     }
 
     if (m.host_id === user?.id) {
-      setPhase('ready-to-join');
-      return;
+      // Host: auto-join immediately, skip lobby
+      return 'auto-join';
     }
 
     if (m.status === 'IN_PROGRESS') {
-      setPhase('ready-to-join');
+      return 'auto-join';
     } else {
       setPhase('waiting-for-host');
+      return null;
     }
   };
 
@@ -176,7 +177,23 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ meetingId, onLeave, is
     async function init() {
       const m = await loadMeeting();
       if (m && isMounted) {
-        evaluatePhase(m);
+        const action = evaluatePhase(m);
+        if (action === 'auto-join') {
+          // Skip lobby — join immediately
+          try {
+            if (m.host_id === user?.id && m.status === 'SCHEDULED') {
+              await meetingService.joinMeeting(meetingId);
+            }
+            await joinMeeting(meetingId, user?.display_name || user?.username || 'Participant');
+            wsService.joinChannel(meetingId);
+            setJoinedAt(Date.now());
+            setPhase('in-call');
+          } catch (err: any) {
+            console.error('Auto-join failed:', err);
+            setErrorMessage('Could not connect to media stream. Please check camera/mic permissions.');
+            setPhase('error');
+          }
+        }
       }
     }
 
@@ -206,7 +223,16 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ meetingId, onLeave, is
         const m = await loadMeeting();
         if (m && m.status === 'IN_PROGRESS') {
           if (pollRef.current) clearInterval(pollRef.current);
-          setPhase('ready-to-join');
+          // Auto-join when host starts — skip lobby
+          try {
+            await joinMeeting(meetingId, user?.display_name || user?.username || 'Participant');
+            wsService.joinChannel(meetingId);
+            setJoinedAt(Date.now());
+            setPhase('in-call');
+          } catch (err) {
+            console.error('Auto-join on host start failed:', err);
+            setPhase('error');
+          }
         }
       }, POLL_INTERVAL_MS);
     } else {
@@ -643,19 +669,6 @@ export const MeetingRoom: React.FC<MeetingRoomProps> = ({ meetingId, onLeave, is
 
   if (isPoppedOut && phase !== 'in-call') {
     return null;
-  }
-
-  if (phase === 'ready-to-join') {
-    return (
-      <MeetingLobby
-        localVideoRef={localVideoRef as any}
-        isAudioMuted={isAudioMuted}
-        isVideoMuted={isVideoMuted}
-        onToggleAudio={toggleAudio}
-        onToggleVideo={toggleVideo}
-        onJoinMeeting={confirmJoin}
-      />
-    );
   }
 
   if (isPoppedOut) {

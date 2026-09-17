@@ -1,7 +1,6 @@
 import React from 'react';
-import { Mic, MicOff, Video, VideoOff, Play, GripHorizontal } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, Play } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import { useDraggable } from '../../hooks/useDraggable';
 
 interface MeetingLobbyProps {
   localVideoRef: React.RefObject<HTMLVideoElement | null>;
@@ -21,18 +20,11 @@ export const MeetingLobby: React.FC<MeetingLobbyProps> = ({
   onJoinMeeting
 }) => {
   const { user } = useAuthStore();
-  const draggable = useDraggable();
 
   return (
     <div className="flex-1 bg-[#141414] flex flex-col items-center justify-center p-6 relative overflow-hidden">
-      <div 
-        style={draggable.style}
-        onMouseDown={draggable.handleDragStart}
-        onTouchStart={draggable.handleDragStart}
-        className={`max-w-xl w-full bg-[#1F1F1F] border border-teams-border rounded-2xl p-6 shadow-2xl space-y-6 animate-in fade-in zoom-in-95 duration-200 select-none cursor-grab active:cursor-grabbing ${draggable.position ? 'fixed z-50' : 'relative'}`}
-      >
-        <div className="text-center space-y-1 flex flex-col items-center cursor-grab active:cursor-grabbing">
-          <GripHorizontal className="w-5 h-5 text-teams-muted opacity-60 mb-1" />
+      <div className="max-w-xl w-full bg-[#1F1F1F] border border-teams-border rounded-2xl p-6 shadow-2xl space-y-6 animate-in fade-in zoom-in-95 duration-200">
+        <div className="text-center space-y-1">
           <h2 className="text-xl font-bold text-white">Ready to join the meeting?</h2>
           <p className="text-xs text-teams-muted">Check your camera and microphone settings before joining.</p>
         </div>

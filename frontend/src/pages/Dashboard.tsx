@@ -5,7 +5,6 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { DirectMessageSidebar } from '../components/chat/DirectMessageSidebar';
 import { ChatArea } from '../components/chat/ChatArea';
 import { DirectChatArea } from '../components/chat/DirectChatArea';
-import { MeetingRoom } from '../components/meeting/MeetingRoom';
 import { CallsHome } from '../components/meeting/CallsHome';
 import { CalendarView } from '../components/calendar/CalendarView';
 import { AdminConsole } from '../components/admin/AdminConsole';
@@ -121,12 +120,6 @@ export const Dashboard: React.FC = () => {
     };
   }, [addToast]);
 
-  // Auto Pop-Out Meeting if user navigates away from calls tab
-  useEffect(() => {
-    if (activeTab !== 'calls' && activeMeetingId && !isMeetingPoppedOut) {
-      setIsMeetingPoppedOut(true);
-    }
-  }, [activeTab, activeMeetingId, isMeetingPoppedOut, setIsMeetingPoppedOut]);
 
   // Global WebSocket event router for Call & Message notifications
   const handleGlobalWSEvent = useCallback((event: any) => {
@@ -414,29 +407,32 @@ export const Dashboard: React.FC = () => {
           ) : activeTab === 'calendar' ? (
             <CalendarView
               onJoinMeeting={(meetingId) => {
-                const currentActiveMeeting = useUIStore.getState().activeMeetingId;
-                if ((callState !== 'idle' || currentActiveMeeting) && currentActiveMeeting !== meetingId) {
+                const currentActiveMeeting = useCallStore.getState().conversationId;
+                if (callState !== 'idle' && currentActiveMeeting && currentActiveMeeting !== meetingId) {
                   alert('⚠️ You can only attend one meeting at a time. Please leave your current meeting before joining another.');
                   return;
                 }
+                const currentUser = useAuthStore.getState().user;
+                useCallStore.setState({
+                  callState: 'active',
+                  callType: 'video',
+                  caller: currentUser ? { id: currentUser.id, name: currentUser.display_name } : null,
+                  recipient: null,
+                  conversationId: meetingId,
+                  callId: meetingId,
+                  isGroupCall: true,
+                  isCaller: false,
+                  isCallMinimized: false,
+                  canRejoin: false
+                });
                 setActiveMeetingId(meetingId);
-                setIsMeetingPoppedOut(false);
                 setActiveTab('calls');
               }}
             />
           ) : activeTab === 'calls' ? (
-            (activeMeetingId && !isMeetingPoppedOut) ? (
-              <MeetingRoom
-                meetingId={activeMeetingId}
-                onLeave={() => setActiveMeetingId(null)}
-                onPopOut={() => setIsMeetingPoppedOut(true)}
-              />
-            ) : (
-              <CallsHome onMeetingStarted={(meetingId) => {
-                setActiveMeetingId(meetingId);
-                setIsMeetingPoppedOut(false);
-              }} />
-            )
+            <CallsHome onMeetingStarted={(meetingId) => {
+              setActiveMeetingId(meetingId);
+            }} />
           ) : activeTab === 'chat' ? (
             <DirectChatArea conversationId={selectedConvId} />
           ) : activeTab === 'teams' ? (
@@ -464,21 +460,6 @@ export const Dashboard: React.FC = () => {
       <FullscreenCallOverlay />
       <ToastContainer />
       <PopoutChatWindow />
-
-      {/* Popped Out Meeting Room */}
-      {activeMeetingId && isMeetingPoppedOut && (
-        <div className="fixed bottom-6 right-6 w-96 h-64 z-[9999] shadow-2xl shadow-indigo-600/30 rounded-2xl overflow-hidden border-2 border-indigo-500 animate-in slide-in-from-bottom-5 fade-in duration-300 flex flex-col mc-glass">
-          <MeetingRoom
-            meetingId={activeMeetingId}
-            onLeave={() => setActiveMeetingId(null)}
-            isPoppedOut={true}
-            onRestore={() => {
-              setIsMeetingPoppedOut(false);
-              setActiveTab('calls');
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 };
