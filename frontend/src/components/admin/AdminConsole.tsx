@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Shield, Users, Layers, Activity, RefreshCw, ShieldCheck, BarChart3 } from 'lucide-react';
-import { User, Team } from '../../types';
+import { Shield, Users, Layers, Activity, RefreshCw, ShieldCheck, BarChart3, Network, Building2 } from 'lucide-react';
+import { User, Team, OrganizationUnit } from '../../types';
 import { userService } from '../../services/userService';
 import { apiClient } from '../../api/client';
+import { organizationHierarchyService } from '../../services/organizationHierarchyService';
 import { useAuthStore } from '../../stores/authStore';
 import { AuditViewer } from '../../features/admin/AuditViewer';
 import { ComplianceDashboard } from '../../features/compliance/ComplianceDashboard';
 import { AnalyticsDashboard } from '../../features/analytics/AnalyticsDashboard';
+import { OrganizationHierarchyView } from '../../features/organization-hierarchy/OrganizationHierarchyView';
 
 export const AdminConsole: React.FC = () => {
   const { user: currentUser } = useAuthStore();
-  const [activeTab, setActiveTab] = useState<'users' | 'teams' | 'audit' | 'compliance' | 'analytics'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'hierarchy' | 'teams' | 'audit' | 'compliance' | 'analytics'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [units, setUnits] = useState<OrganizationUnit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -20,9 +23,10 @@ export const AdminConsole: React.FC = () => {
   const loadAdminData = async () => {
     try {
       setIsLoading(true);
-      const [uRes, tRes] = await Promise.allSettled([
+      const [uRes, tRes, unRes] = await Promise.allSettled([
         userService.getUsers(),
-        apiClient.get('/teams')
+        apiClient.get('/teams'),
+        organizationHierarchyService.getUnits()
       ]);
 
       if (uRes.status === 'fulfilled') {
@@ -33,6 +37,10 @@ export const AdminConsole: React.FC = () => {
       if (tRes.status === 'fulfilled') {
         const tData = tRes.value.data;
         setTeams(Array.isArray(tData) ? tData : tData?.data || []);
+      }
+
+      if (unRes.status === 'fulfilled') {
+        setUnits(unRes.value);
       }
     } catch (err) {
       console.error('Admin data load error:', err);
@@ -51,11 +59,29 @@ export const AdminConsole: React.FC = () => {
     setIsRefreshing(false);
   };
 
+  const handleAssignUserUnit = async (userId: string, unitId: string) => {
+    try {
+      if (unitId) {
+        await organizationHierarchyService.assignEmployee(unitId, userId);
+      } else {
+        // Find existing unit
+        const existing = users.find((u) => u.id === userId);
+        if (existing?.organization_unit_id) {
+          await organizationHierarchyService.removeEmployee(existing.organization_unit_id, userId);
+        }
+      }
+      await loadAdminData();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to update employee unit assignment');
+    }
+  };
+
   const filteredUsers = users.filter(
     (u) =>
       u.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.department?.toLowerCase().includes(searchQuery.toLowerCase())
+      u.department?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.organization_unit_name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -73,7 +99,7 @@ export const AdminConsole: React.FC = () => {
                 Admin Privileges Granted
               </span>
             </h1>
-            <p className="text-[11px] text-mc-muted">Governance, Compliance & Performance Analytics</p>
+            <p className="text-[11px] text-mc-muted">Governance, Organization Hierarchy, Compliance & Analytics</p>
           </div>
         </div>
 
@@ -88,9 +114,10 @@ export const AdminConsole: React.FC = () => {
       </div>
 
       {/* Sub Navigation Bar */}
-      <div className="px-6 border-b border-white/5 bg-[#11131A] flex items-center gap-6 shrink-0">
+      <div className="px-6 border-b border-white/5 bg-[#11131A] flex items-center gap-6 shrink-0 overflow-x-auto">
         {[
           { id: 'users', label: 'User Directory', icon: Users },
+          { id: 'hierarchy', label: 'Organization Hierarchy', icon: Network },
           { id: 'teams', label: 'Teams & Workspaces', icon: Layers },
           { id: 'audit', label: 'Security Audit Logs', icon: Activity },
           { id: 'compliance', label: 'Compliance & Governance', icon: ShieldCheck },
@@ -102,7 +129,7 @@ export const AdminConsole: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`py-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
+              className={`py-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all shrink-0 ${
                 isActive
                   ? 'border-indigo-500 text-indigo-400 font-bold'
                   : 'border-transparent text-mc-muted hover:text-white'
@@ -122,7 +149,7 @@ export const AdminConsole: React.FC = () => {
             <div className="flex items-center justify-between">
               <input
                 type="text"
-                placeholder="Filter users by name or email..."
+                placeholder="Filter users by name, email, or unit..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="bg-[#171923] border border-white/10 rounded-xl px-4 py-2 text-white text-xs w-72 focus:outline-none focus:border-indigo-500 transition-all"
@@ -136,7 +163,8 @@ export const AdminConsole: React.FC = () => {
                   <tr>
                     <th className="py-3 px-4">Member</th>
                     <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Department</th>
+                    <th className="py-3 px-4">Organization Unit (Hierarchy)</th>
+                    <th className="py-3 px-4">Job Title</th>
                     <th className="py-3 px-4">Status</th>
                   </tr>
                 </thead>
@@ -159,7 +187,21 @@ export const AdminConsole: React.FC = () => {
                           {u.email === 'admin@example.com' ? 'ORG ADMIN' : 'MEMBER'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-mc-muted text-xs">{u.department || 'Engineering'}</td>
+                      <td className="py-3 px-4">
+                        <select
+                          value={u.organization_unit_id || ''}
+                          onChange={(e) => handleAssignUserUnit(u.id, e.target.value)}
+                          className="bg-[#171923] border border-white/10 rounded-lg px-2.5 py-1 text-white text-[11px] focus:outline-none focus:border-indigo-500 transition-colors"
+                        >
+                          <option value="">-- No Unit Assigned --</option>
+                          {units.map((unit) => (
+                            <option key={unit.id} value={unit.id}>
+                              {unit.name} ({unit.unit_type})
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-3 px-4 text-mc-muted text-xs">{u.job_title || 'Team Member'}</td>
                       <td className="py-3 px-4 text-emerald-400 font-semibold text-xs">Active</td>
                     </tr>
                   ))}
@@ -167,6 +209,11 @@ export const AdminConsole: React.FC = () => {
               </table>
             </div>
           </div>
+        )}
+
+        {activeTab === 'hierarchy' && <OrganizationHierarchyView />}
+        {activeTab === 'hierarchy' && (
+          <OrganizationHierarchyView canManage={true} onUnitsUpdated={loadAdminData} />
         )}
 
         {activeTab === 'teams' && (

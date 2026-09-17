@@ -27,27 +27,55 @@ db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 sqlite_url = f"sqlite+aiosqlite:///{db_path}"
 
 if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
-    try:
-        import asyncio
-        import asyncpg
-        clean_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
-        async def _check_pg():
-            conn = await asyncpg.connect(clean_url, timeout=2)
-            await conn.close()
-            return True
-        asyncio.run(_check_pg())
-        effective_db_url = settings.DATABASE_URL
-    except Exception as e:
+    if not is_db_reachable(settings.DATABASE_URL):
+        if settings.ENVIRONMENT == "production":
+            raise ConnectionError(f"CRITICAL: PostgreSQL server is unreachable at {settings.DATABASE_URL} in production mode.")
         effective_db_url = sqlite_url
-        print(f"ℹ️ PostgreSQL connection check failed ({e}). Falling back to embedded database: {effective_db_url}")
+        host_info = settings.DATABASE_URL.split("@")[-1].split("/")[0] if "@" in settings.DATABASE_URL else settings.DATABASE_URL
+        print(f"ℹ️ PostgreSQL server ({host_info}) unreachable. Falling back to embedded database: {effective_db_url}")
+    else:
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                effective_db_url = settings.DATABASE_URL
+            else:
+                import asyncpg
+                clean_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+                async def _check_pg():
+                    conn = await asyncpg.connect(clean_url, timeout=2)
+                    await conn.close()
+                    return True
+                asyncio.run(_check_pg())
+                effective_db_url = settings.DATABASE_URL
+        except Exception as e:
+            if settings.ENVIRONMENT == "production":
+                raise ConnectionError(f"CRITICAL: PostgreSQL connection check failed in production ({e})")
+            effective_db_url = sqlite_url
+            print(f"ℹ️ PostgreSQL connection check failed ({e}). Falling back to embedded database: {effective_db_url}")
 else:
     effective_db_url = sqlite_url
 
+engine_kwargs = {
+    "echo": False,
+    "future": True,
+    "pool_pre_ping": True,
+}
+if "postgresql" in effective_db_url:
+    engine_kwargs.update({
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+    })
+
 engine = create_async_engine(
     effective_db_url,
-    echo=False,
-    future=True,
-    pool_pre_ping=True
+    **engine_kwargs
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -91,6 +119,8 @@ async def init_db():
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(sync_db_schema_sync)
     except Exception as e:
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(f"Database initialization failed in production mode: {e}")
         if "postgresql" in effective_db_url:
             db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "teams_local.db")
             effective_db_url = f"sqlite+aiosqlite:///{db_path}"

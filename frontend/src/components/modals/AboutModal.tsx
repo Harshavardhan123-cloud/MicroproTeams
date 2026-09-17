@@ -38,8 +38,8 @@ export const AboutModal: React.FC = () => {
 
         {/* Content Body */}
         <div className="p-6 text-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-[#141824] border border-white/10 flex items-center justify-center mx-auto shadow-xl shadow-indigo-600/20">
-            <MicroproLogo className="w-12 h-12" />
+          <div className="w-16 h-16 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center mx-auto shadow-xl shadow-indigo-600/20 bg-[#f7f7f7]">
+            <MicroproLogo className="w-full h-full object-cover" />
           </div>
 
           <div>

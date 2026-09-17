@@ -1,6 +1,8 @@
 import React from 'react';
-import { FileText, FileSpreadsheet, Archive, Presentation, Download, FileCode, File } from 'lucide-react';
+import { FileText, FileSpreadsheet, Archive, Presentation, Download, FileCode, File, Edit3, Eye, Check, X, ShieldAlert } from 'lucide-react';
 import { getMediaUrl } from '../../api/client';
+import { MediaAnnotationModal, MediaAnnotationResult } from './MediaAnnotationModal';
+import { useNotificationStore } from '../../stores/notificationStore';
 
 interface AttachmentCardProps {
   name: string;
@@ -8,6 +10,10 @@ interface AttachmentCardProps {
   size?: number;
   type?: string;
   className?: string;
+  onAnnotateSend?: (result: MediaAnnotationResult) => void;
+  messageId?: string;
+  isViewOnce?: boolean;
+  caption?: string;
 }
 
 export const formatFileSize = (bytes?: number) => {
@@ -77,12 +83,43 @@ export const getFileTypeInfo = (fileName: string, mimeType?: string) => {
   };
 };
 
-export const AttachmentCard: React.FC<AttachmentCardProps> = ({ name, url, size, type, className = '' }) => {
+export const AttachmentCard: React.FC<AttachmentCardProps> = ({
+  name,
+  url,
+  size,
+  type,
+  className = '',
+  onAnnotateSend,
+  messageId,
+  isViewOnce = false,
+  caption = ''
+}) => {
   const [imgFailed, setImgFailed] = React.useState(false);
+  const [isAnnotating, setIsAnnotating] = React.useState(false);
+  const [lightboxOpen, setLightboxOpen] = React.useState(false);
+  const [isOpened, setIsOpened] = React.useState(() => {
+    if (!messageId) return false;
+    return localStorage.getItem(`vo_opened_${messageId}`) === 'true';
+  });
+  const [isViewingOnce, setIsViewingOnce] = React.useState(false);
+
   const mediaUrl = getMediaUrl(url);
   const typeInfo = getFileTypeInfo(name, type);
   const IconComponent = typeInfo.icon;
   const isImage = !imgFailed && (type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(name || mediaUrl) || mediaUrl.startsWith('data:image/'));
+
+  const handleAnnotationComplete = (result: MediaAnnotationResult) => {
+    if (onAnnotateSend) {
+      onAnnotateSend(result);
+    } else {
+      useNotificationStore.getState().addToast({
+        title: 'Image Ready',
+        body: 'Annotated image prepared.',
+        type: 'info'
+      });
+    }
+    setIsAnnotating(false);
+  };
 
   const handleDownloadFile = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -145,31 +182,229 @@ export const AttachmentCard: React.FC<AttachmentCardProps> = ({ name, url, size,
     }
   };
 
-  if (isImage) {
+  if (isViewOnce) {
     return (
-      <div className={`relative group max-w-sm rounded-2xl overflow-hidden border border-white/10 bg-[#11131A] shadow-lg ${className}`}>
-        <a href={mediaUrl} target="_blank" rel="noopener noreferrer" className="block">
-          <img
-            src={mediaUrl}
-            alt={name}
-            className="max-h-60 max-w-full object-cover rounded-2xl hover:scale-[1.02] transition-transform duration-200"
-            onError={() => setImgFailed(true)}
-          />
-        </a>
-        <div className="p-2 bg-[#171923] border-t border-white/5 flex items-center justify-between text-xs">
-          <span className="text-white font-medium truncate max-w-[200px]">{name}</span>
+      <>
+        {isOpened ? (
+          <div className={`flex items-center gap-3 px-4 py-3 bg-[#13151F] border border-white/5 rounded-2xl max-w-xs select-none opacity-60 ${className}`}>
+            <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-mc-muted text-xs font-bold">
+              <span>1</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5 text-mc-muted" />
+                <span className="text-xs font-semibold text-mc-muted">Opened</span>
+              </div>
+              <span className="text-[10px] text-mc-muted/60">View once photo expired</span>
+            </div>
+          </div>
+        ) : (
           <button
             type="button"
-            onClick={handleDownloadFile}
-            className="p-1 text-mc-muted hover:text-indigo-400 transition-colors cursor-pointer"
-            title="Download Image"
+            onClick={() => setIsViewingOnce(true)}
+            className={`flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-indigo-950/40 via-[#181a29] to-[#141622] hover:from-indigo-900/40 hover:to-[#1a1d2e] border border-indigo-500/30 hover:border-indigo-500/60 rounded-2xl max-w-xs transition-all shadow-md group cursor-pointer text-left ${className}`}
+            title="Click to view once photo"
           >
-            <Download className="w-3.5 h-3.5" />
+            <div className="w-9 h-9 rounded-full bg-indigo-500/20 border-2 border-dashed border-indigo-400 flex items-center justify-center text-indigo-300 font-extrabold text-sm group-hover:scale-105 transition-transform shadow-inner">
+              1
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="text-xs font-bold text-white font-display">Photo</span>
+                <span className="text-[9px] px-1.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded font-semibold border border-indigo-500/30">View Once</span>
+              </div>
+              <p className="text-[10px] text-mc-muted truncate mt-0.5">Tap to view • Disappears after closing</p>
+            </div>
           </button>
-        </div>
-      </div>
+        )}
+
+        {/* Dedicated Secure View Once Fullscreen Viewer */}
+        {isViewingOnce && (
+          <div
+            className="fixed inset-0 z-[99999] bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-4 sm:p-6 animate-in fade-in duration-200"
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {/* Top Bar */}
+            <div className="w-full max-w-4xl flex items-center justify-between py-2 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-400 flex items-center justify-center text-indigo-400 font-bold text-xs">
+                  1
+                </div>
+                <span className="text-sm font-bold text-white">View Once Photo</span>
+                <span className="text-xs text-amber-400/90 ml-2 hidden sm:inline">(Will disappear when closed)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (messageId) {
+                    localStorage.setItem(`vo_opened_${messageId}`, 'true');
+                  }
+                  setIsOpened(true);
+                  setIsViewingOnce(false);
+                }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+                <span>Close</span>
+              </button>
+            </div>
+
+            {/* Main Image Display */}
+            <div className="flex-1 w-full max-w-4xl flex items-center justify-center my-4 overflow-hidden select-none">
+              <img
+                src={mediaUrl}
+                alt="View once media"
+                draggable={false}
+                className="max-h-[75vh] max-w-full object-contain rounded-xl shadow-2xl pointer-events-auto"
+                onContextMenu={(e) => e.preventDefault()}
+              />
+            </div>
+
+            {/* Bottom Caption & Dismiss */}
+            <div className="w-full max-w-4xl flex flex-col items-center gap-2 pb-2">
+              {caption && (
+                <p className="text-sm text-white bg-black/60 px-4 py-2 rounded-xl backdrop-blur-md max-w-md text-center">
+                  {caption}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (messageId) {
+                    localStorage.setItem(`vo_opened_${messageId}`, 'true');
+                  }
+                  setIsOpened(true);
+                  setIsViewingOnce(false);
+                }}
+                className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all active:scale-95 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+      </>
     );
   }
+
+  if (isImage) {
+    return (
+      <>
+        <div className={`relative group max-w-sm rounded-2xl overflow-hidden border border-white/10 bg-[#11131A] shadow-lg ${className}`}>
+          {/* Floating markup pill on hover */}
+          <div className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsAnnotating(true);
+              }}
+              className="px-2.5 py-1 bg-black/80 hover:bg-black text-white text-[11px] font-semibold rounded-lg flex items-center gap-1.5 shadow-xl backdrop-blur-md border border-white/20 transition-transform active:scale-95 cursor-pointer"
+              title="Markup / Annotate Image"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Markup</span>
+            </button>
+          </div>
+
+          {/* Click image to open lightbox dialog (not new tab) */}
+          <button
+            type="button"
+            className="block w-full cursor-zoom-in"
+            onClick={() => setLightboxOpen(true)}
+            title="Click to view image"
+          >
+            <img
+              src={mediaUrl}
+              alt={name}
+              className="max-h-60 max-w-full object-cover rounded-t-2xl hover:scale-[1.02] transition-transform duration-200 w-full"
+              onError={() => setImgFailed(true)}
+            />
+          </button>
+          <div className="p-2 bg-[#171923] border-t border-white/5 flex items-center justify-between text-xs">
+            <span className="text-white font-medium truncate max-w-[170px]">{name}</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsAnnotating(true);
+                }}
+                className="p-1 text-mc-muted hover:text-emerald-400 transition-colors cursor-pointer flex items-center gap-1"
+                title="Annotate Image (Crop, Draw, Text, Blur, Stickers)"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadFile}
+                className="p-1 text-mc-muted hover:text-indigo-400 transition-colors cursor-pointer"
+                title="Download Image"
+              >
+                <Download className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Lightbox Dialog */}
+        {lightboxOpen && (
+          <div
+            className="fixed inset-0 z-[99999] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setLightboxOpen(false)}
+          >
+            <div
+              className="relative max-w-5xl max-h-[90vh] w-full flex flex-col items-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header bar */}
+              <div className="w-full flex items-center justify-between mb-3 px-1">
+                <span className="text-white/80 text-sm font-medium truncate max-w-[70%]">{name}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadFile}
+                    className="p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-xl transition-colors cursor-pointer"
+                    title="Download"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLightboxOpen(false)}
+                    className="p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-xl transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              {/* Full-size image */}
+              <img
+                src={mediaUrl}
+                alt={name}
+                className="max-h-[80vh] max-w-full object-contain rounded-2xl shadow-2xl select-none"
+                draggable={false}
+                onError={() => setImgFailed(true)}
+              />
+            </div>
+          </div>
+        )}
+
+        <MediaAnnotationModal
+          isOpen={isAnnotating}
+          imageSource={mediaUrl}
+          initialCaption=""
+          onClose={() => setIsAnnotating(false)}
+          onSend={handleAnnotationComplete}
+        />
+      </>
+    );
+  }
+
 
   return (
     <div

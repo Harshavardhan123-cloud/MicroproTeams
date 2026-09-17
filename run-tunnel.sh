@@ -1,13 +1,19 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# ==============================================================================
+# MicroproTeams - Cloudflare HTTPS Tunnel Launcher
+# ==============================================================================
 
-PROJECT_DIR="/home/hchatte/Desktop/MS"
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
 cd "$PROJECT_DIR"
 
 echo "=========================================================="
-echo " 🔒 Starting Secure HTTPS Tunnel for Micropro_Commute "
+echo " 🔒 Starting Secure HTTPS Tunnel for MicroproTeams "
 echo "=========================================================="
-echo " Tunneling HTTPS traffic on port 3000..."
+echo "📁 Root Directory: $PROJECT_DIR"
+echo " Tunneling HTTPS traffic to local port 3000..."
 echo " Press Ctrl+C to stop the tunnel."
 echo "=========================================================="
 

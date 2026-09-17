@@ -219,6 +219,7 @@ class Organization(Base):
     users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
     teams = relationship("Team", back_populates="organization", cascade="all, delete-orphan")
     members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
+    units = relationship("OrganizationUnit", back_populates="organization", cascade="all, delete-orphan")
 
 class OrganizationMember(Base):
     __tablename__ = 'organization_members'
@@ -257,6 +258,7 @@ class User(Base):
 
     id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    organization_unit_id = Column(GUID(), ForeignKey('organization_units.id', ondelete='SET NULL'), nullable=True, index=True)
     role_id = Column(GUID(), ForeignKey('roles.id'), nullable=True)
 
     email = Column(String(255), unique=True, nullable=False, index=True)
@@ -267,7 +269,9 @@ class User(Base):
     last_name = Column(String(100), nullable=False)
     display_name = Column(String(200), nullable=False)
 
-    avatar_url = Column(String(512), nullable=True)
+    # Older SQLite workspaces may contain an inline base64 avatar rather than a
+    # URL. Text preserves those existing profiles during PostgreSQL migration.
+    avatar_url = Column(Text, nullable=True)
     job_title = Column(String(100), nullable=True)
     department = Column(String(100), nullable=True)
     timezone = Column(String(50), default="UTC", nullable=False)
@@ -284,8 +288,36 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     organization = relationship("Organization", back_populates="users")
+    organization_unit = relationship("OrganizationUnit", foreign_keys=[organization_unit_id], back_populates="employees")
     role = relationship("Role")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+
+class OrganizationUnit(Base):
+    __tablename__ = 'organization_units'
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(GUID(), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    parent_id = Column(GUID(), ForeignKey('organization_units.id', ondelete='SET NULL'), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    code = Column(String(50), nullable=True, index=True)
+    unit_type = Column(String(50), default="DEPARTMENT", nullable=False)
+    description = Column(Text, nullable=True)
+    manager_id = Column(GUID(), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    status = Column(String(20), default="ACTIVE", nullable=False)
+    order_index = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('organization_id', 'code', name='_org_unit_code_uc'),
+    )
+
+    organization = relationship("Organization", back_populates="units")
+    parent = relationship("OrganizationUnit", remote_side=[id], back_populates="children")
+    children = relationship("OrganizationUnit", back_populates="parent")
+    manager = relationship("User", foreign_keys=[manager_id])
+    employees = relationship("User", foreign_keys="User.organization_unit_id", back_populates="organization_unit")
 
 class UserSession(Base):
     __tablename__ = 'user_sessions'
@@ -350,6 +382,7 @@ class TeamMember(Base):
     user_id = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     role = Column(SQLEnum(MemberRole), default=MemberRole.MEMBER, nullable=False)
     joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    visible_history_from = Column(DateTime, nullable=True)
 
     __table_args__ = (UniqueConstraint('team_id', 'user_id', name='_team_user_uc'),)
 
@@ -382,6 +415,7 @@ class ChannelMember(Base):
     user_id = Column(GUID(), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     role = Column(SQLEnum(ChannelMemberRole), default=ChannelMemberRole.MEMBER, nullable=False)
     joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    visible_history_from = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (UniqueConstraint('channel_id', 'user_id', name='_channel_user_uc'),)
@@ -474,11 +508,11 @@ class Message(Base):
     channel = relationship("Channel", back_populates="messages")
     conversation = relationship("DirectConversation", back_populates="messages")
     sender = relationship("User")
-    reactions = relationship("MessageReaction", back_populates="message", cascade="all, delete-orphan")
-    attachments = relationship("MessageAttachment", back_populates="message", cascade="all, delete-orphan")
-    mentions = relationship("MessageMention", back_populates="message", cascade="all, delete-orphan")
+    reactions = relationship("MessageReaction", back_populates="message", cascade="all, delete-orphan", passive_deletes=True)
+    attachments = relationship("MessageAttachment", back_populates="message", cascade="all, delete-orphan", passive_deletes=True)
+    mentions = relationship("MessageMention", back_populates="message", cascade="all, delete-orphan", passive_deletes=True)
     parent = relationship("Message", remote_side=[id], back_populates="replies")
-    replies = relationship("Message", back_populates="parent")
+    replies = relationship("Message", back_populates="parent", cascade="all, delete-orphan", passive_deletes=True)
 
 class MessageAttachment(Base):
     __tablename__ = 'message_attachments'
@@ -950,4 +984,3 @@ class BackgroundJob(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-

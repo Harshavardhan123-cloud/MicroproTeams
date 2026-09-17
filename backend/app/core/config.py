@@ -44,6 +44,19 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 # 24 hours for dev
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    CORS_ORIGINS: str = "*"
+
+    # Database Pool Settings
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800
+
+    # File Uploads
+    MAX_FILE_UPLOAD_SIZE_MB: int = 100
+
+    # Data Seeding
+    SEED_DEMO_DATA: bool = False
 
     # MinIO / Object Storage
     S3_ENDPOINT: str = "http://localhost:9000"
@@ -56,7 +69,12 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-if settings.JWT_SECRET == _FALLBACK_JWT_SECRET or settings.JWT_REFRESH_SECRET == _FALLBACK_JWT_REFRESH_SECRET:
+if settings.ENVIRONMENT == "production":
+    if settings.JWT_SECRET.startswith("UNSET-DEV-ONLY-") or "CHANGE_ME" in settings.JWT_SECRET:
+        raise RuntimeError("CRITICAL SECURITY ERROR: Production environment requires a secure, non-default JWT_SECRET in .env.")
+    if settings.JWT_REFRESH_SECRET.startswith("UNSET-DEV-ONLY-") or "CHANGE_ME" in settings.JWT_REFRESH_SECRET:
+        raise RuntimeError("CRITICAL SECURITY ERROR: Production environment requires a secure, non-default JWT_REFRESH_SECRET in .env.")
+elif settings.JWT_SECRET == _FALLBACK_JWT_SECRET or settings.JWT_REFRESH_SECRET == _FALLBACK_JWT_REFRESH_SECRET:
     logger.warning(
         "JWT_SECRET/JWT_REFRESH_SECRET not set in the environment — using a random "
         "per-process fallback. Set them in .env (see .env.example) for stable sessions "

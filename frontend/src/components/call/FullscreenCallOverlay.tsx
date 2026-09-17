@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { saveRecording } from '../../services/localRecordingStore';
-import { Phone, Video, Mic, MicOff, VideoOff, PhoneOff, Shield, Volume2, AlertCircle, MessageSquare, Hand, Smile, Send, MonitorUp, Sliders, Pin, PinOff, RotateCcw, RefreshCw, UserPlus, Users, Minimize2, Maximize2, Circle, Sparkles, FileText, Bot, X, GripVertical, Bell, BellOff } from 'lucide-react';
+import { Phone, Video, Mic, MicOff, VideoOff, PhoneOff, Shield, Volume2, AlertCircle, MessageSquare, Hand, Smile, Send, MonitorUp, Sliders, Pin, PinOff, RotateCcw, RefreshCw, UserPlus, Users, Minimize2, Maximize2, Circle, Sparkles, FileText, Bot, X, GripVertical, Bell, BellOff, Image, Paperclip } from 'lucide-react';
 import { useDraggable } from '../../hooks/useDraggable';
 import { useCallStore } from '../../stores/callStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -8,6 +8,7 @@ import { wsService } from '../../services/websocketService';
 import { useWebRTC } from '../../hooks/useWebRTC';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useAuthStore } from '../../stores/authStore';
+import { apiClient, getMediaUrl } from '../../api/client';
 import { DeviceSettingsModal } from '../modals/DeviceSettingsModal';
 import { AddParticipantModal } from '../modals/AddParticipantModal';
 import { RemoteParticipantStream, meetingWebRTCManager } from '../../services/MeetingWebRTCManager';
@@ -17,6 +18,7 @@ import { TranscriptView } from '../../features/transcripts/TranscriptView';
 import { MeetingAssistantPanel } from '../../features/meeting-ai/MeetingAssistant';
 import { TranscriptSegment, MeetingSummary, ActionItem } from '../../types/meetingAI';
 import { UserAvatar } from '../common/UserAvatar';
+import { MediaAnnotationModal, MediaAnnotationResult } from '../chat/MediaAnnotationModal';
 
 interface RemoteVideoTileProps {
   streamObj?: RemoteParticipantStream;
@@ -281,8 +283,12 @@ export const FullscreenCallOverlay: React.FC = () => {
   const [showHostEndModal, setShowHostEndModal] = useState(false);
   const [showLeaveConfirmModal, setShowLeaveConfirmModal] = useState(false);
   const [disconnectTimer, setDisconnectTimer] = useState(20);
-  const [chatMessages, setChatMessages] = useState<{ id: string, senderName: string, text: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ id: string; senderName: string; text: string; imageUrl?: string; isViewOnce?: boolean }[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
+  const [annotationMedia, setAnnotationMedia] = useState<File | string | null>(null);
+  const [annotationInitialCaption, setAnnotationInitialCaption] = useState('');
+  const chatImageInputRef = useRef<HTMLInputElement>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   
   const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
@@ -662,12 +668,18 @@ export const FullscreenCallOverlay: React.FC = () => {
 
   // Handle incoming mesh events (chat, hand raise, reactions, recording state & end call for all)
   const handleMeshEvents = useCallback((event: any) => {
-    if (event.type === 'call_chat_message' && event.text) {
+    if (event.type === 'call_chat_message' && (event.text || event.imageUrl)) {
       const isFromSelf = currentUser?.id && String(event.sender_user_id) === String(currentUser.id);
       if (!isFromSelf) {
         setChatMessages(prev => {
           if (event.msgId && prev.some(m => m.id === event.msgId)) return prev;
-          return [...prev, { id: event.msgId || Date.now().toString(), senderName: event.senderName || 'Peer', text: event.text }];
+          return [...prev, {
+            id: event.msgId || Date.now().toString(),
+            senderName: event.senderName || 'Peer',
+            text: event.text || '',
+            imageUrl: event.imageUrl,
+            isViewOnce: event.isViewOnce
+          }];
         });
         if (!isChatOpen) {
           setUnreadChatCount(prev => prev + 1);
@@ -895,8 +907,76 @@ export const FullscreenCallOverlay: React.FC = () => {
       channel_id: targetRoom,
       target_user_id: targetUser?.id,
       senderName: currentUser?.name || 'Me',
+      sender_user_id: currentUser?.id,
       text: textToSend
     });
+  };
+
+  const handleChatPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData || !clipboardData.items) return;
+    for (const item of Array.from(clipboardData.items)) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          setAnnotationMedia(file);
+          setAnnotationInitialCaption(chatInput);
+          setIsAnnotationOpen(true);
+          return;
+        }
+      }
+    }
+  };
+
+  const handleChatImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
+      setAnnotationMedia(file);
+      setAnnotationInitialCaption(chatInput);
+      setIsAnnotationOpen(true);
+      e.target.value = '';
+    }
+  };
+
+  const handleSendAnnotatedChatMedia = async (result: MediaAnnotationResult) => {
+    const targetRoom = conversationId || 'direct-call-room';
+    const msgId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    try {
+      const formData = new FormData();
+      formData.append('file', result.file);
+      const uploadRes = await apiClient.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileData = uploadRes.data.data || uploadRes.data;
+      const fileUrl = fileData.file_url || fileData.url || result.previewUrl;
+      const textToSend = result.caption || '';
+
+      const newMsg = {
+        id: msgId,
+        senderName: 'Me',
+        text: textToSend,
+        imageUrl: fileUrl,
+        isViewOnce: result.isViewOnce
+      };
+      setChatMessages(prev => [...prev, newMsg]);
+      setChatInput('');
+
+      wsService.send({
+        type: 'call_chat_message',
+        msgId,
+        conversation_id: targetRoom,
+        channel_id: targetRoom,
+        target_user_id: targetUser?.id,
+        senderName: currentUser?.name || 'Me',
+        sender_user_id: currentUser?.id,
+        text: textToSend,
+        imageUrl: fileUrl,
+        isViewOnce: result.isViewOnce
+      });
+    } catch (err) {
+      console.error('In-call media upload error:', err);
+    }
   };
 
   const toggleHandRaise = () => {
@@ -1479,9 +1559,38 @@ export const FullscreenCallOverlay: React.FC = () => {
                     </div>
                   ) : (
                     chatMessages.map(msg => (
-                      <div key={msg.id} className="bg-[#222228] p-3 rounded-xl border border-white/5 space-y-1">
-                        <span className="text-[10px] font-bold text-teams-purple block">{msg.senderName}</span>
-                        <p className="text-xs text-white leading-relaxed">{msg.text}</p>
+                      <div key={msg.id} className="bg-[#222228] p-3 rounded-xl border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-teams-purple">{msg.senderName}</span>
+                          {msg.isViewOnce && (
+                            <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-bold">
+                              🔒 View Once
+                            </span>
+                          )}
+                        </div>
+                        {msg.imageUrl && (
+                          <div className="relative group rounded-lg overflow-hidden border border-white/10 max-w-xs">
+                            <img
+                              src={getMediaUrl(msg.imageUrl)}
+                              alt="In-call attachment"
+                              className="max-h-48 w-full object-cover rounded-lg"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAnnotationMedia(getMediaUrl(msg.imageUrl!));
+                                setAnnotationInitialCaption(msg.text || '');
+                                setIsAnnotationOpen(true);
+                              }}
+                              className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 hover:bg-black text-white text-[10px] font-medium rounded-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shadow-lg cursor-pointer"
+                              title="Markup & Annotate"
+                            >
+                              <Image className="w-3 h-3 text-emerald-400" />
+                              <span>Markup</span>
+                            </button>
+                          </div>
+                        )}
+                        {msg.text && <p className="text-xs text-white leading-relaxed select-text">{msg.text}</p>}
                       </div>
                     ))
                   )}
@@ -1516,17 +1625,34 @@ export const FullscreenCallOverlay: React.FC = () => {
 
             {/* Chat Input Bar */}
             {isChatOpen && (
-              <form onSubmit={handleSendChat} className="p-3 border-t border-teams-border/50 bg-[#1E1E22] flex gap-2">
+              <form onSubmit={handleSendChat} className="p-3 border-t border-teams-border/50 bg-[#1E1E22] flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={chatImageInputRef}
+                  onChange={handleChatImageSelect}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => chatImageInputRef.current?.click()}
+                  className="p-2 text-teams-muted hover:text-emerald-400 hover:bg-white/5 rounded-xl transition-colors shrink-0"
+                  title="Annotate & Send Photo (Draw, Text, Shapes, Blur, Stickers)"
+                >
+                  <Image className="w-4 h-4 text-emerald-400" />
+                </button>
                 <input
                   type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Type a message..."
-                  className="flex-1 bg-[#141416] border border-teams-border/50 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teams-purple"
+                  onPaste={handleChatPaste}
+                  placeholder="Type message or paste image..."
+                  className="flex-1 bg-[#141416] border border-teams-border/50 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teams-purple min-w-0"
                 />
                 <button
                   type="submit"
-                  className="p-2 bg-teams-purple hover:bg-teams-purple-hover text-white rounded-xl transition-colors"
+                  disabled={!chatInput.trim()}
+                  className="p-2 bg-teams-purple hover:bg-teams-purple-hover disabled:opacity-40 text-white rounded-xl transition-colors shrink-0"
                 >
                   <Send className="w-4 h-4" />
                 </button>
@@ -1959,6 +2085,18 @@ export const FullscreenCallOverlay: React.FC = () => {
         onRejoinSession={handleRejoinSession}
         isScreenSharing={isScreenSharing}
         onToggleScreenShare={toggleScreenShare}
+      />
+
+      {/* In-Call Media Annotation Modal */}
+      <MediaAnnotationModal
+        isOpen={isAnnotationOpen}
+        imageSource={annotationMedia}
+        initialCaption={annotationInitialCaption}
+        onClose={() => {
+          setIsAnnotationOpen(false);
+          setAnnotationMedia(null);
+        }}
+        onSend={handleSendAnnotatedChatMedia}
       />
     </div>
   );

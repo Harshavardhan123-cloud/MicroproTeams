@@ -65,7 +65,8 @@ async def list_users(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(User).where(User.organization_id == current_user.organization_id)
+    from sqlalchemy.orm import selectinload
+    stmt = select(User).options(selectinload(User.organization_unit)).where(User.organization_id == current_user.organization_id)
     res = await db.execute(stmt)
     users = res.scalars().all()
     return [
@@ -76,6 +77,11 @@ async def list_users(
             "first_name": u.first_name,
             "last_name": u.last_name,
             "display_name": u.display_name,
+            "avatar_url": u.avatar_url,
+            "job_title": u.job_title,
+            "department": u.department,
+            "organization_unit_id": str(u.organization_unit_id) if u.organization_unit_id else None,
+            "organization_unit_name": u.organization_unit.name if u.organization_unit else None,
             "is_active": u.is_active,
             "created_at": u.created_at.isoformat()
         }

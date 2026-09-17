@@ -105,8 +105,8 @@ export const LoginPage: React.FC = () => {
           <div className="space-y-6 relative z-10">
             {/* Logo Treatment */}
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center">
-                <MicroproLogo className="w-9 h-9" />
+              <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/15 flex items-center justify-center shadow-lg bg-[#f7f7f7] shrink-0">
+                <MicroproLogo className="w-full h-full object-cover" />
               </div>
               <span className="font-bold text-lg tracking-tight text-white font-display">
                 Micropro<span className="text-indigo-400">_Commute</span>
@@ -276,11 +276,11 @@ export const LoginPage: React.FC = () => {
                   setServerInput(e.target.value);
                   setServerTestResult('idle');
                 }}
-                placeholder="http://192.168.1.147:8000"
+                placeholder="http://localhost:8000"
                 className="w-full bg-[#0D0F16] border border-white/10 focus:border-indigo-500 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none font-mono"
               />
               <p className="text-[11px] text-mc-muted mt-1.5">
-                Enter your backend host. E.g., <code className="text-indigo-400 font-mono">http://192.168.1.147:8000</code> or Cloudflare tunnel.
+                Enter your backend host. E.g., <code className="text-indigo-400 font-mono">http://localhost:8000</code> or Cloudflare tunnel.
               </p>
             </div>
 
@@ -290,17 +290,17 @@ export const LoginPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setServerInput('http://192.168.1.147:8000');
+                  setServerInput('http://localhost:8000');
                   setServerTestResult('idle');
                 }}
                 className="text-[10px] px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-mono transition-all font-semibold"
               >
-                LAN (192.168.1.147:8000)
+                Local (localhost:8000)
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setServerInput('https://outdoors-introduction-commodities-gender.trycloudflare.com');
+                  setServerInput('https://violin-providers-entries-content.trycloudflare.com');
                   setServerTestResult('idle');
                 }}
                 className="text-[10px] px-2 py-0.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-mono transition-all font-semibold"

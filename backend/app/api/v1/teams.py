@@ -1,5 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -32,6 +33,8 @@ class TeamUpdateRequest(BaseModel):
 class AddMemberRequest(BaseModel):
     user_id: str
     role: MemberRole = MemberRole.MEMBER
+    history_sharing_option: Optional[str] = "ALL"  # "ALL", "NONE", or "DAYS"
+    history_days: Optional[int] = None
 
 class UpdateMemberRoleRequest(BaseModel):
     role: MemberRole
@@ -293,6 +296,7 @@ async def get_team_members(
             "user_id": str(m.user_id),
             "role": m.role,
             "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+            "visible_history_from": m.visible_history_from.isoformat() if getattr(m, "visible_history_from", None) else None,
             "user": {
                 "id": str(m.user.id),
                 "display_name": m.user.display_name,
@@ -327,7 +331,18 @@ async def add_team_member(
     if existing.scalars().first():
         return error_response("MEMBER_EXISTS", "User is already a member of this team.", status_code=400)
 
-    member = TeamMember(team_id=team_id, user_id=req.user_id, role=req.role)
+    visible_history_from = None
+    if req.history_sharing_option == "NONE":
+        visible_history_from = datetime.utcnow()
+    elif req.history_sharing_option == "DAYS" and req.history_days and req.history_days > 0:
+        visible_history_from = datetime.utcnow() - timedelta(days=req.history_days)
+
+    member = TeamMember(
+        team_id=team_id,
+        user_id=req.user_id,
+        role=req.role,
+        visible_history_from=visible_history_from
+    )
     db.add(member)
     await db.commit()
     await db.refresh(member)
@@ -335,14 +350,15 @@ async def add_team_member(
     await AuditService.log_action(
         db, str(current_user.organization_id), str(current_user.id),
         "TEAM_MEMBER_ADDED", "team_member", str(member.id),
-        details=f"Added user '{target_user.display_name}' to team '{team_id}' with role '{req.role}'"
+        details=f"Added user '{target_user.display_name}' to team '{team_id}' with role '{req.role}' (history: {req.history_sharing_option})"
     )
 
     return success_response({
         "id": str(member.id),
         "team_id": str(member.team_id),
         "user_id": str(member.user_id),
-        "role": member.role
+        "role": member.role,
+        "visible_history_from": member.visible_history_from.isoformat() if member.visible_history_from else None
     }, status_code=201)
 
 @router.patch("/{team_id}/members/{user_id}")

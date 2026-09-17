@@ -11,6 +11,8 @@ export interface User {
   avatar_url?: string;
   job_title?: string;
   department?: string;
+  organization_unit_id?: string | null;
+  organization_unit_name?: string | null;
   timezone: string;
   presence: PresenceStatus;
   status_message?: string;
@@ -81,4 +83,63 @@ export interface AuthTokens {
   access_token: string;
   refresh_token: string;
   token_type: string;
+}
+
+export type UnitType = 'ORGANIZATION' | 'BUSINESS_UNIT' | 'DIVISION' | 'DEPARTMENT' | 'TEAM' | 'UNIT';
+
+export interface ManagerSummary {
+  id: string;
+  display_name: string;
+  email: string;
+  avatar_url?: string;
+  job_title?: string;
+}
+
+export interface UnitEmployeeSummary {
+  id: string;
+  display_name: string;
+  email: string;
+  avatar_url?: string;
+  job_title?: string;
+  department?: string;
+  is_active: boolean;
+}
+
+export interface OrganizationUnit {
+  id: string;
+  organization_id: string;
+  parent_id?: string | null;
+  parent_name?: string | null;
+  name: string;
+  code?: string | null;
+  unit_type: UnitType | string;
+  description?: string | null;
+  manager_id?: string | null;
+  manager?: ManagerSummary | null;
+  status: 'ACTIVE' | 'INACTIVE' | string;
+  order_index: number;
+  direct_employee_count: number;
+  total_employee_count: number;
+  children_count?: number;
+  created_at: string;
+  updated_at: string;
+  employees?: UnitEmployeeSummary[];
+}
+
+export interface HierarchyNode {
+  id: string;
+  organization_id: string;
+  parent_id?: string | null;
+  name: string;
+  code?: string | null;
+  unit_type: UnitType | string;
+  description?: string | null;
+  manager_id?: string | null;
+  manager?: ManagerSummary | null;
+  status: 'ACTIVE' | 'INACTIVE' | string;
+  order_index: number;
+  direct_employee_count: number;
+  total_employee_count: number;
+  children: HierarchyNode[];
+  employees?: UnitEmployeeSummary[];
 }

@@ -1,8 +1,13 @@
 from typing import List, Optional
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.repositories.message_repository import MessageRepository
 from app.models.models import Message, MessageType, PinnedMessage, User, DirectConversationMember, UserMessageDeletion
+from app.models.models import (
+    Message, MessageType, PinnedMessage, User, DirectConversationMember,
+    UserMessageDeletion, Channel, ChannelMember, TeamMember, ChannelType
+)
 from app.core.websocket import ws_manager
 from app.services.authorization_service import AuthorizationService
 
@@ -14,9 +19,44 @@ class MessageService:
         self.db = db
         self.repo = MessageRepository(db)
 
+    async def _get_visible_history_from(self, channel: Channel, user: User) -> Optional[datetime]:
+        """Check if user has a visible_history_from restriction on the channel/team."""
+        is_admin = getattr(user, 'is_admin', False) or getattr(user, 'is_superuser', False) or await AuthorizationService.is_org_admin(user, self.db)
+        if is_admin:
+            return None
+
+        # If team owner, no restriction
+        if await AuthorizationService.can_manage_team(user, str(channel.team_id), self.db):
+            return None
+
+        if channel.type == ChannelType.PRIVATE:
+            cm_res = await self.db.execute(
+                select(ChannelMember.visible_history_from).where(
+                    ChannelMember.channel_id == channel.id,
+                    ChannelMember.user_id == user.id
+                )
+            )
+            return cm_res.scalars().first()
+        else:
+            tm_res = await self.db.execute(
+                select(TeamMember.visible_history_from).where(
+                    TeamMember.team_id == channel.team_id,
+                    TeamMember.user_id == user.id
+                )
+            )
+            return tm_res.scalars().first()
+
     async def _ensure_can_access_message(self, msg: Message, current_user: User) -> None:
         if msg.channel_id:
             allowed = await AuthorizationService.can_access_channel(current_user, str(msg.channel_id), self.db)
+            if allowed:
+                ch_res = await self.db.execute(select(Channel).where(Channel.id == msg.channel_id))
+                ch = ch_res.scalars().first()
+                if ch:
+                    visible_from = await self._get_visible_history_from(ch, current_user)
+                    if visible_from is not None and msg.created_at and msg.created_at < visible_from:
+                        if str(msg.sender_id) != str(current_user.id):
+                            allowed = False
         elif msg.conversation_id:
             res = await self.db.execute(
                 select(DirectConversationMember).where(
@@ -91,6 +131,17 @@ class MessageService:
             )
             deleted_ids = set(del_res.scalars().all())
             messages = [m for m in messages if m.id not in deleted_ids]
+
+            ch_res = await self.db.execute(select(Channel).where(Channel.id == channel_id))
+            channel = ch_res.scalars().first()
+            if channel:
+                visible_from = await self._get_visible_history_from(channel, current_user)
+                if visible_from is not None:
+                    messages = [
+                        m for m in messages
+                        if (m.created_at and m.created_at >= visible_from) or str(m.sender_id) == str(current_user.id)
+                    ]
+
         return [self.format_message(m) for m in messages]
 
     async def get_replies(self, parent_id: str, current_user: User) -> List[dict]:
@@ -99,6 +150,18 @@ class MessageService:
             return []
         await self._ensure_can_access_message(parent, current_user)
         replies = await self.repo.get_replies(parent_id)
+
+        if parent.channel_id:
+            ch_res = await self.db.execute(select(Channel).where(Channel.id == parent.channel_id))
+            channel = ch_res.scalars().first()
+            if channel:
+                visible_from = await self._get_visible_history_from(channel, current_user)
+                if visible_from is not None:
+                    replies = [
+                        r for r in replies
+                        if (r.created_at and r.created_at >= visible_from) or str(r.sender_id) == str(current_user.id)
+                    ]
+
         return [self.format_message(m) for m in replies]
 
     async def create_message(
@@ -185,7 +248,7 @@ class MessageService:
 
         return formatted
 
-    async def update_message(self, message_id: str, current_user: User, content: str) -> Optional[dict]:
+    async def update_message(self, message_id: str, current_user: User, content: str, attachments: Optional[list] = None) -> Optional[dict]:
         msg = await self.repo.get_by_id(message_id)
         if not msg or str(msg.sender_id) != str(current_user.id):
             return None
@@ -193,6 +256,44 @@ class MessageService:
 
         msg.content = content
         msg.is_edited = True
+
+        # Replace attachments if provided (e.g., annotated image edit)
+        if attachments is not None:
+            from sqlalchemy import delete as sa_delete
+            from app.models.models import MessageAttachment, FileRecord
+            await self.db.execute(sa_delete(MessageAttachment).where(MessageAttachment.message_id == msg.id))
+            for att in attachments:
+                att_name = att.get("name") if isinstance(att, dict) else getattr(att, "name", "Attachment")
+                att_url = att.get("url") if isinstance(att, dict) else getattr(att, "url", None)
+                att_type = att.get("type") if isinstance(att, dict) else getattr(att, "type", None)
+                att_size = att.get("size") if isinstance(att, dict) else getattr(att, "size", None)
+                att_file_id = att.get("file_id") if isinstance(att, dict) else getattr(att, "file_id", None)
+
+                f_bytes = None
+                b64_val = None
+                if att_file_id:
+                    try:
+                        f_res = await self.db.execute(select(FileRecord).where(FileRecord.id == att_file_id))
+                        f_rec = f_res.scalars().first()
+                        if f_rec:
+                            f_bytes = f_rec.file_data
+                            b64_val = f_rec.base64_data
+                    except Exception:
+                        pass
+
+                att_obj = MessageAttachment(
+                    message_id=msg.id,
+                    display_name=att_name or "Attachment",
+                    file_url=att_url,
+                    mime_type=att_type,
+                    size=att_size,
+                    file_id=att_file_id,
+                    file_data=f_bytes,
+                    base64_data=b64_val,
+                    sort_order="0"
+                )
+                self.db.add(att_obj)
+
         updated = await self.repo.update(msg)
         formatted = self.format_message(updated)
 
@@ -209,8 +310,13 @@ class MessageService:
         if not msg:
             return False
 
-        is_admin = getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_superuser', False) or getattr(current_user, 'role', '') in ('ADMIN', 'ORG_ADMIN')
-        if str(msg.sender_id) != str(current_user.id) and not is_admin:
+        is_sender = str(msg.sender_id) == str(current_user.id)
+        is_admin = getattr(current_user, 'is_superuser', False) or await AuthorizationService.is_org_admin(current_user, self.db)
+        can_manage = False
+        if msg.channel_id:
+            can_manage = await AuthorizationService.can_manage_channel(current_user, str(msg.channel_id), self.db)
+
+        if not (is_sender or is_admin or can_manage):
             return False
 
         await self._ensure_can_access_message(msg, current_user)

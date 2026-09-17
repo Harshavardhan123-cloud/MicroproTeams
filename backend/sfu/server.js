@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -9,29 +10,92 @@ const config = require('./config');
 const app = express();
 app.use(cors({ origin: config.corsOrigin }));
 
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'mediasoup-sfu',
+    workers: workers.length,
+    rooms: rooms.size,
+    uptime: Math.floor(process.uptime())
+  });
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: config.corsOrigin, methods: ['GET', 'POST'] }
 });
 
 // Require a valid access token (same JWT_SECRET as the FastAPI backend) on
-// every connection — previously anyone who could reach this port could join
-// any room with no login at all. This confirms "is a genuinely logged-in
-// user of this app" but doesn't check meeting-specific admission/lobby
-// status, which lives in the backend's MeetingParticipant table.
+// every connection in production.
 io.use((socket, next) => {
-  const secret = config.jwtSecret || process.env.JWT_SECRET || 'UX2uSYPervxO3Ysrml5wILaUEfEw-HCJKEeUypWMMSyZiQuVFgLQT3iBy49xNMGl';
+  const secret = config.jwtSecret || process.env.JWT_SECRET;
+  if (!secret && process.env.NODE_ENV === 'production') {
+    return next(new Error('Internal Server Error: Missing JWT_SECRET in SFU environment'));
+  }
   const token = socket.handshake.auth && socket.handshake.auth.token;
-  if (token) {
+  if (token && secret) {
     try {
       const payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
       socket.userId = payload.sub;
+      return next();
     } catch (err) {
-      console.warn('[SFU] Auth token verify warning (allowing connection):', err.message);
+      if (process.env.NODE_ENV === 'production') {
+        return next(new Error(`Authentication failed: ${err.message}`));
+      }
+      console.warn('[SFU] Auth token verify warning (allowing connection in dev mode):', err.message);
+      return next();
     }
+  } else if (process.env.NODE_ENV === 'production') {
+    return next(new Error('Authentication required: Token missing'));
   }
   next();
 });
+
+// --- ICE server list handed to clients ---
+// Anything outside this set can end up as part of a coturn username, and the
+// username is parsed by splitting on the first ':' — so a colon (or anything
+// exotic) in a user id must never reach it.
+const TURN_USERNAME_UNSAFE = /[^A-Za-z0-9._@-]/g;
+
+/**
+ * Build the `iceServers` array returned inside the createWebRtcTransport ack.
+ *
+ * STUN alone leaves mobile clients on carrier-grade NAT unable to receive
+ * media at all, so when a TURN server is configured we append a *short-lived*
+ * relay credential using coturn's REST API scheme:
+ *
+ *   username   = "<unix-expiry>:<userId>"
+ *   credential = base64( HMAC-SHA1( username, TURN_SECRET ) )
+ *
+ * coturn recomputes the same HMAC from the username it receives, so no state
+ * is shared between the two processes beyond the secret, and the credential
+ * stops working on its own once the embedded timestamp passes. Credentials
+ * are minted per transport, so each one is fresh.
+ *
+ * Any failure here degrades to the STUN-only list rather than throwing: a
+ * broken TURN config must not be able to take calls down entirely.
+ */
+function buildIceServers(userId) {
+  const iceServers = config.stunServers.map(entry => ({ ...entry }));
+
+  if (!config.turn || !config.turn.enabled) return iceServers;
+
+  try {
+    const expiry = Math.floor(Date.now() / 1000) + config.turn.credentialTtl;
+    const identity = String(userId || 'anonymous').replace(TURN_USERNAME_UNSAFE, '') || 'anonymous';
+    const username = `${expiry}:${identity}`;
+    const credential = crypto
+      .createHmac('sha1', config.turn.secret)
+      .update(username)
+      .digest('base64');
+
+    iceServers.push({ urls: config.turn.urls, username, credential });
+  } catch (err) {
+    console.error('[SFU] Failed to mint TURN credentials, falling back to STUN only:', err.message);
+  }
+
+  return iceServers;
+}
 
 // --- Mediasoup Global State ---
 let workers = [];
@@ -134,7 +198,12 @@ io.on('connection', (socket) => {
         try { await transport.setMaxIncomingBitrate(maxIncomingBitrate); } catch (error) {}
       }
       
-      transport.on('dtlsstatechange', dtlsState => {
+      transport.on('icestatechange', (iceState) => {
+        console.log(`[SFU] Transport ${transport.id} (${socket.id}) ICE state: ${iceState}`);
+      });
+
+      transport.on('dtlsstatechange', (dtlsState) => {
+        console.log(`[SFU] Transport ${transport.id} (${socket.id}) DTLS state: ${dtlsState}`);
         if (dtlsState === 'closed') transport.close();
       });
       
@@ -145,10 +214,15 @@ io.on('connection', (socket) => {
           id: transport.id,
           iceParameters: transport.iceParameters,
           iceCandidates: transport.iceCandidates,
-          dtlsParameters: transport.dtlsParameters
+          dtlsParameters: transport.dtlsParameters,
+          // socket.userId is only set when a valid JWT was presented; the
+          // socket id is a fine stand-in, since this value exists purely to
+          // attribute a relay session in coturn's logs.
+          iceServers: buildIceServers(socket.userId || socket.id)
         }
       });
     } catch (err) {
+      console.error(`[SFU] Error creating WebRtcTransport:`, err);
       callback({ error: err.message });
     }
   });
@@ -156,10 +230,16 @@ io.on('connection', (socket) => {
   socket.on('connectWebRtcTransport', async ({ roomId, transportId, dtlsParameters }, callback) => {
     try {
       const room = rooms.get(roomId);
-      const transport = room.peers.get(socket.id).transports.get(transportId);
+      if (!room) return callback({ error: 'Room not found' });
+      const peer = room.peers.get(socket.id);
+      if (!peer) return callback({ error: 'Peer not found' });
+      const transport = peer.transports.get(transportId);
+      if (!transport) return callback({ error: 'Transport not found' });
       await transport.connect({ dtlsParameters });
+      console.log(`[SFU] Transport ${transportId} DTLS connected successfully`);
       callback({ success: true });
     } catch (err) {
+      console.error(`[SFU] Error connecting transport ${transportId}:`, err);
       callback({ error: err.message });
     }
   });
@@ -308,3 +388,23 @@ createWorkers().then(() => {
     console.log(`Mediasoup SFU Signaling Server running on http://${config.listenIp}:${config.listenPort}`);
   });
 });
+
+function gracefulShutdown(signal) {
+  console.log(`[SFU] Received ${signal}. Gracefully shutting down SFU...`);
+  server.close(() => {
+    for (const worker of workers) {
+      try {
+        worker.close();
+      } catch (e) {}
+    }
+    console.log('[SFU] Closed all workers and server connections.');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    console.error('[SFU] Forced shutdown due to timeout.');
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

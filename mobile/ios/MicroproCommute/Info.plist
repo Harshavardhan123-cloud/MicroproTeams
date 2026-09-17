@@ -31,8 +31,44 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Micropro Commute requires camera access for video calling and meetings.</string>
+	<!--
+	  iOS 14+ gates any connection to a LAN peer behind the local-network prompt, and the
+	  prompt is only shown if this key exists. The SFU is routinely reached at a private
+	  address (e.g. http://192.168.1.147:3010 / ws://...), and without this key the socket
+	  fails with a generic, undiagnosable connection error instead of asking the user.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Micropro Commute connects to meeting servers on your local network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Micropro Commute requires microphone access for crystal clear audio calling and meetings.</string>
+	<!--
+	  ===========================================================================
+	  iOS SCREEN SHARING (mediaDevices.getDisplayMedia) — DELIBERATELY DISABLED.
+
+	  react-native-webrtc reads these two keys out of the main bundle:
+	    RTCAppGroupIdentifier     (ScreenCaptureController.m:8, :68)
+	    RTCScreenSharingExtension (ScreenCapturePickerViewManager.m:8, :28)
+
+	  DO NOT uncomment them until the ReplayKit Broadcast Upload Extension target AND the
+	  matching App Group entitlement both exist. Enabling RTCAppGroupIdentifier without the
+	  App Group entitlement is worse than leaving it absent:
+	    - ScreenCaptureController.startCapture() early-returns when the key is MISSING
+	      (safe no-op), but
+	    - when the key is PRESENT and the entitlement is not,
+	      containerURLForSecurityApplicationGroupIdentifier: returns nil, socketFilePath
+	      becomes nil, and SocketConnection.m:116 does
+	      strncpy(addr.sun_path, filePath.UTF8String, ...) on a NULL source — i.e. the app
+	      crashes the instant the user taps "share screen".
+
+	  The values below are the correct ones for this bundle id (com.micropro.commute); they
+	  must match the App Group and the extension's bundle id exactly.
+
+	  <key>RTCAppGroupIdentifier</key>
+	  <string>group.com.micropro.commute</string>
+	  <key>RTCScreenSharingExtension</key>
+	  <string>com.micropro.commute.broadcast</string>
+	  ===========================================================================
+	-->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -42,9 +78,14 @@
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
+	<!--
+	  Was 'armv7'. No 32-bit iOS device can run iOS 15.1, and react-native-webrtc's
+	  JitsiWebRTC binary is arm64-only, so an armv7 requirement makes the app
+	  uninstallable on every device that can actually run it.
+	-->
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<string>armv7</string>
+		<string>arm64</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

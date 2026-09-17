@@ -129,7 +129,10 @@ export class NotificationOrchestrator {
     addToast({
       title: event.title,
       body: event.body,
-      type: toastType
+      type: toastType,
+      conversationId: event.conversationId,
+      callId: event.callId,
+      meetingId: event.meetingId
     });
   }
 

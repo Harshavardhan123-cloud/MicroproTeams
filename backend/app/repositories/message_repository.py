@@ -9,7 +9,6 @@ class MessageRepository:
         self.db = db
 
     async def get_by_id(self, message_id: str) -> Optional[Message]:
-        self.db.expire_all()
         res = await self.db.execute(
             select(Message)
             .options(
@@ -63,6 +62,17 @@ class MessageRepository:
         return await self.get_by_id(message.id)
 
     async def delete(self, message: Message) -> None:
+        from sqlalchemy import delete as sa_delete, update as sa_update
+        from app.models.models import UserMessageDeletion, PinnedMessage, MessageReaction, MessageAttachment, MessageMention
+
+        await self.db.execute(sa_delete(UserMessageDeletion).where(UserMessageDeletion.message_id == message.id))
+        await self.db.execute(sa_delete(PinnedMessage).where(PinnedMessage.message_id == message.id))
+        await self.db.execute(sa_delete(MessageReaction).where(MessageReaction.message_id == message.id))
+        await self.db.execute(sa_delete(MessageAttachment).where(MessageAttachment.message_id == message.id))
+        await self.db.execute(sa_delete(MessageMention).where(MessageMention.message_id == message.id))
+        await self.db.execute(
+            sa_update(Message).where(Message.parent_message_id == message.id).values(parent_message_id=None)
+        )
         await self.db.delete(message)
         await self.db.commit()
 

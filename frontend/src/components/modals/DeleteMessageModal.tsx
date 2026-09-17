@@ -5,7 +5,8 @@ interface DeleteMessageModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (mode: 'me' | 'everyone') => void;
-  isAdmin: boolean;
+  isAdmin?: boolean;
+  canDeleteForEveryone?: boolean;
   itemType?: 'message' | 'chat';
 }
 
@@ -13,10 +14,13 @@ export const DeleteMessageModal: React.FC<DeleteMessageModalProps> = ({
   isOpen,
   onClose,
   onConfirm,
-  isAdmin,
+  isAdmin = false,
+  canDeleteForEveryone,
   itemType = 'message'
 }) => {
   if (!isOpen) return null;
+
+  const allowEveryone = canDeleteForEveryone !== undefined ? canDeleteForEveryone : isAdmin;
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
@@ -41,15 +45,19 @@ export const DeleteMessageModal: React.FC<DeleteMessageModalProps> = ({
           <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <p className="leading-relaxed">
-              {isAdmin ? (
-                <>As an Administrator, you can remove this {itemType} for yourself or permanently delete it for all conversation members.</>
+              {allowEveryone ? (
+                isAdmin && !canDeleteForEveryone ? (
+                  <>As an Administrator, you can remove this {itemType} for yourself or permanently delete it for all conversation members.</>
+                ) : (
+                  <>You can delete this {itemType} for everyone in the conversation, or remove it for yourself only.</>
+                )
               ) : (
                 <>This action will remove the {itemType} from your view. Other participants will still be able to see it.</>
               )}
             </p>
           </div>
 
-          {isAdmin && (
+          {allowEveryone && isAdmin && (
             <div className="flex items-center gap-2 text-[11px] text-indigo-400 font-semibold px-1">
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Admin Options Available</span>
@@ -59,7 +67,7 @@ export const DeleteMessageModal: React.FC<DeleteMessageModalProps> = ({
 
         {/* Actions */}
         <div className="flex flex-col gap-2 p-5 pt-0">
-          {isAdmin ? (
+          {allowEveryone ? (
             <>
               <button
                 onClick={() => {

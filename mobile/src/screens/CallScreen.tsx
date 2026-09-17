@@ -6,18 +6,88 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Colors } from '../theme/colors';
 import { Avatar } from '../components/common/Avatar';
-import { callStore, CallParticipant } from '../stores/callStore';
-import { authStore } from '../stores/authStore';
+import { callStore, DEFAULT_CALL_ROOM_ID } from '../stores/callStore';
 import { AddPeopleModal } from '../components/call/AddPeopleModal';
 import { Toast } from '../components/common/Toast';
+import { MeetingRoomScreen } from './MeetingRoomScreen';
+import type { RootStackParamList } from '../navigation/types';
+
+/**
+ * CallScreen is the *signalling* surface: it owns the outgoing / ringing states
+ * of a call-control exchange that runs over the FastAPI WebSocket. Once the call
+ * reaches 'active' it hands the whole viewport to MeetingRoomScreen, which owns
+ * the mediasoup session, the participant grid and the in-call controls.
+ *
+ * WHY THE ROOM GETS ITS OWN NAVIGATOR HERE
+ * ----------------------------------------
+ * `App.tsx` renders CallScreen from a branch that returns BEFORE the app's
+ * `<NavigationContainer>` is mounted (whenever callState is 'active' or
+ * 'outgoing'), so there is no navigator in scope and no way to
+ * `navigation.navigate('MeetingRoom', …)` from here. MeetingRoomScreen is a
+ * react-navigation screen that reads `useRoute()` / `useNavigation()`
+ * unconditionally, and both of those throw outside a container — so the room is
+ * hosted in a dedicated single-screen container instead of being composed in as
+ * a plain component.
+ *
+ * This is safe precisely because of that early return: the app's main container
+ * is unmounted for the whole time this one is mounted, so the two never coexist.
+ * MeetingRoomScreen is ALSO registered on the main stack (RootNavigator), which
+ * is the path meetings take when opened from the Meetings tab; that route is
+ * unaffected by this one.
+ *
+ * The cleaner end state is for App.tsx to stop short-circuiting on 'active' and
+ * let the main navigator own the room. This file needs no change when it does.
+ */
+const CallStack = createNativeStackNavigator<RootStackParamList>();
+
+const formatTime = (secs: number) => {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+// ---------------------------------------------------------------------------
+// Failure containment
+// ---------------------------------------------------------------------------
+
+/**
+ * A render error inside the meeting room would otherwise unmount the whole app
+ * (CallScreen is the root element in this branch) and leave the user with a white
+ * screen and a live, unhangupable call. The fallback keeps the call controllable.
+ */
+class MeetingRoomBoundary extends React.Component<
+  { children: React.ReactNode; fallback: (error: Error) => React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('[CALL] Meeting room failed to render:', error);
+  }
+
+  render() {
+    if (this.state.error) return this.props.fallback(this.state.error);
+    return this.props.children;
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 export const CallScreen: React.FC = () => {
   const [callState, setCallState] = useState(callStore.getState());
   const [addPeopleModalVisible, setAddPeopleModalVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [ringSeconds, setRingSeconds] = useState(0);
 
   useEffect(() => {
     const unsub = callStore.subscribe(() => {
@@ -26,29 +96,72 @@ export const CallScreen: React.FC = () => {
     return () => unsub();
   }, []);
 
+  const isRinging = callState.callState === 'outgoing';
+
+  // Ring elapsed timer — reset whenever a new outgoing call starts.
+  useEffect(() => {
+    if (!isRinging) {
+      setRingSeconds(0);
+      return;
+    }
+    setRingSeconds(0);
+    const timer = setInterval(() => setRingSeconds((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [isRinging, callState.callId]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const handleToggleRecordingPrivacy = () => {
-    const isNowVisible = callStore.toggleRecordingVisibility();
-    showToast(
-      isNowVisible
-        ? 'Attendee recording notification is now ON'
-        : 'Attendee recording notification is now HIDDEN'
+  // ── Active call: the meeting room owns the viewport from here on.
+  if (callState.callState === 'active') {
+    return (
+      <MeetingRoomBoundary
+        fallback={(error) => (
+          <CallFallback
+            message={error.message || 'The meeting room failed to load.'}
+            onEnd={() => callStore.endCall(true)}
+          />
+        )}
+      >
+        {/* Keyed on the call so a subsequent call remounts with fresh params —
+            initialParams are only read on a screen's first mount. `displayName`
+            is deliberately omitted: the room resolves it from the signed-in user,
+            and the value the SFU wants is this device's own name, not the peer's.
+            No `meetingId`, because an accepted call has no lobby to sit in. */}
+        <NavigationContainer key={callState.callId || 'call'}>
+          <CallStack.Navigator screenOptions={{ headerShown: false }}>
+            <CallStack.Screen
+              name="MeetingRoom"
+              component={MeetingRoomScreen}
+              initialParams={{
+                roomId: callState.roomId || DEFAULT_CALL_ROOM_ID,
+                callType: callState.callType,
+                isHost: callState.isCaller,
+              }}
+            />
+          </CallStack.Navigator>
+        </NavigationContainer>
+      </MeetingRoomBoundary>
     );
-  };
+  }
 
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  // ── Anything that is not a live outgoing call has no signalling UI to show.
+  //    App.tsx only routes 'active' and 'outgoing' here; this is belt and braces.
+  if (!isRinging) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centered}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+          <Text style={styles.statusLine}>Connecting…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
-  const isHost = callState.isCaller;
-  const showRecordingBadge =
-    callState.isRecording && (isHost || callState.notifyParticipantsOfRecording);
+  const target = callState.recipient || callState.caller;
+  const targetName = target?.name || 'Teammate';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -62,16 +175,11 @@ export const CallScreen: React.FC = () => {
               {callState.isGroupCall ? 'Group Meeting' : '1-on-1 Call'}
             </Text>
           </View>
-
-          {/* Recording Badge */}
-          {showRecordingBadge ? (
-            <View style={styles.recBadge}>
-              <View style={styles.recDot} />
-              <Text style={styles.recText}>
-                REC {formatTime(callState.recordingSeconds)}
-              </Text>
-            </View>
-          ) : null}
+          <View style={styles.callTypePill}>
+            <Text style={styles.callTypePillText}>
+              {callState.callType === 'audio' ? 'Audio' : 'Video'}
+            </Text>
+          </View>
         </View>
 
         {/* Add People Button (Always ENABLED for 1-to-1 & Group calls) */}
@@ -84,93 +192,56 @@ export const CallScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Host Recording Privacy Bar (Shown if user is Host) */}
-      {isHost ? (
-        <View style={styles.hostPrivacyBar}>
-          <View style={styles.hostPrivacyInfo}>
-            <Text style={styles.hostPrivacyTitle}>Host Recording Privacy</Text>
-            <Text style={styles.hostPrivacyDesc}>
-              {callState.notifyParticipantsOfRecording
-                ? 'Attendees can see the REC notification'
-                : 'Attendee REC notification is hidden'}
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.privacyToggleBtn,
-              callState.notifyParticipantsOfRecording
-                ? styles.privacyToggleOn
-                : styles.privacyToggleOff,
-            ]}
-            onPress={handleToggleRecordingPrivacy}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.privacyToggleText}>
-              {callState.notifyParticipantsOfRecording ? 'Notify: ON' : 'Notify: OFF'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+      {/* Media engine failures surface here so a call that will never carry audio
+          or video says so instead of ringing silently forever. */}
+      {callState.mediaError ? (
+        <TouchableOpacity
+          style={styles.errorBanner}
+          onPress={() => callStore.clearMediaError()}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.errorBannerText}>{callState.mediaError}</Text>
+          <Text style={styles.errorBannerDismiss}>Tap to dismiss</Text>
+        </TouchableOpacity>
       ) : null}
 
-      {/* Video / Participant Mesh Grid */}
-      <ScrollView
-        contentContainerStyle={styles.participantsGrid}
-        style={styles.gridScrollView}
-      >
-        {callState.participants.map((participant) => (
-          <View key={participant.id} style={styles.participantCard}>
-            <View style={styles.avatarPulsingContainer}>
-              <Avatar
-                name={participant.name}
-                avatarUrl={participant.avatar}
-                size={70}
-              />
-            </View>
+      {/* Ringing card */}
+      <View style={styles.ringingStage}>
+        <View style={styles.ringHalo}>
+          <Avatar name={targetName} avatarUrl={target?.avatar} size={112} />
+        </View>
 
-            <View style={styles.participantTag}>
-              <Text style={styles.participantName}>
-                {participant.name}
-                {participant.isHost ? ' (Host)' : ''}
-              </Text>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
+        <Text style={styles.calleeName}>{targetName}</Text>
+        <Text style={styles.statusLine}>
+          {callState.mediaState === 'reconnecting' ? 'Reconnecting…' : 'Ringing…'}
+        </Text>
+        <Text style={styles.ringTimer}>{formatTime(ringSeconds)}</Text>
 
-      {/* In-Call HUD Action Dock */}
+        {callState.participants.length > 2 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.invitedRow}
+          >
+            {callState.participants.map((participant) => (
+              <View key={participant.id} style={styles.invitedChip}>
+                <Avatar
+                  name={participant.name}
+                  avatarUrl={participant.avatar}
+                  size={26}
+                />
+                <Text style={styles.invitedName} numberOfLines={1}>
+                  {participant.name}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+      </View>
+
+      {/* Ringing dock — media controls stay in the meeting room; the only action
+          that exists before the call is answered is cancelling it. */}
       <View style={styles.hudDock}>
-        {/* Mute Mic */}
-        <TouchableOpacity
-          style={[styles.hudButton, callState.isMuted && styles.hudButtonDanger]}
-          onPress={() => callStore.toggleMute()}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.hudEmoji}>{callState.isMuted ? '🔇' : '🎙️'}</Text>
-          <Text style={styles.hudLabel}>{callState.isMuted ? 'Unmute' : 'Mute'}</Text>
-        </TouchableOpacity>
-
-        {/* Video Camera Toggle */}
-        <TouchableOpacity
-          style={[styles.hudButton, callState.isVideoOff && styles.hudButtonDanger]}
-          onPress={() => callStore.toggleVideo()}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.hudEmoji}>{callState.isVideoOff ? '🚫' : '📹'}</Text>
-          <Text style={styles.hudLabel}>{callState.isVideoOff ? 'Video Off' : 'Video'}</Text>
-        </TouchableOpacity>
-
-        {/* Speakerphone */}
-        <TouchableOpacity
-          style={styles.hudButton}
-          onPress={() => callStore.toggleSpeaker()}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.hudEmoji}>{callState.isSpeakerOn ? '🔊' : '🔈'}</Text>
-          <Text style={styles.hudLabel}>Speaker</Text>
-        </TouchableOpacity>
-
-        {/* Add People Button in HUD */}
         <TouchableOpacity
           style={[styles.hudButton, styles.hudButtonPrimary]}
           onPress={() => setAddPeopleModalVisible(true)}
@@ -180,31 +251,16 @@ export const CallScreen: React.FC = () => {
           <Text style={styles.hudLabel}>Add People</Text>
         </TouchableOpacity>
 
-        {/* Host Record Button */}
-        {isHost ? (
-          <TouchableOpacity
-            style={[
-              styles.hudButton,
-              callState.isRecording ? styles.hudButtonRecording : null,
-            ]}
-            onPress={() => callStore.toggleRecording()}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.hudEmoji}>{callState.isRecording ? '⏹️' : '⏺️'}</Text>
-            <Text style={styles.hudLabel}>
-              {callState.isRecording ? 'Stop REC' : 'Record'}
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-
-        {/* End Call */}
         <TouchableOpacity
           style={[styles.hudButton, styles.hudButtonEndCall]}
-          onPress={() => callStore.endCall(true)}
+          onPress={() => {
+            showToast('Cancelling call…');
+            callStore.endCall(true);
+          }}
           activeOpacity={0.7}
         >
           <Text style={styles.hudEmoji}>📞</Text>
-          <Text style={styles.hudLabel}>End</Text>
+          <Text style={styles.hudLabel}>Cancel</Text>
         </TouchableOpacity>
       </View>
 
@@ -217,10 +273,34 @@ export const CallScreen: React.FC = () => {
   );
 };
 
+/** Last-resort in-call UI: the call is live, the room screen is not. */
+const CallFallback: React.FC<{ message: string; onEnd: () => void }> = ({ message, onEnd }) => (
+  <SafeAreaView style={styles.container}>
+    <View style={styles.centered}>
+      <Text style={styles.fallbackTitle}>Call connected</Text>
+      <Text style={styles.fallbackBody}>{message}</Text>
+      <TouchableOpacity
+        style={[styles.hudButton, styles.hudButtonEndCall, styles.fallbackEndBtn]}
+        onPress={onEnd}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.hudEmoji}>📞</Text>
+        <Text style={styles.hudLabel}>End Call</Text>
+      </TouchableOpacity>
+    </View>
+  </SafeAreaView>
+);
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
   },
   topBar: {
     flexDirection: 'row',
@@ -249,28 +329,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  recBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    gap: 6,
-  },
-  recDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.rose,
-  },
-  recText: {
-    color: '#FF6B6B',
-    fontSize: 10.5,
-    fontWeight: '800',
-  },
   addPeopleTopBtn: {
     backgroundColor: Colors.surfaceLight,
     borderWidth: 1,
@@ -284,87 +342,79 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  hostPrivacyBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(18, 22, 32, 0.95)',
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.25)',
+  errorBanner: {
     marginHorizontal: 16,
     marginTop: 10,
     padding: 10,
-    borderRadius: 14,
-  },
-  hostPrivacyInfo: {
-    flex: 1,
-  },
-  hostPrivacyTitle: {
-    color: Colors.textPrimary,
-    fontSize: 12.5,
-    fontWeight: '700',
-  },
-  hostPrivacyDesc: {
-    color: Colors.textSecondary,
-    fontSize: 10.5,
-    marginTop: 1,
-  },
-  privacyToggleBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(239, 68, 68, 0.14)',
     borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
   },
-  privacyToggleOn: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderColor: Colors.emerald,
+  errorBannerText: {
+    color: '#FCA5A5',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  privacyToggleOff: {
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-    borderColor: Colors.amber,
+  errorBannerDismiss: {
+    color: Colors.textMuted,
+    fontSize: 10,
+    marginTop: 2,
   },
-  privacyToggleText: {
-    color: Colors.textPrimary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  gridScrollView: {
+  ringingStage: {
     flex: 1,
-  },
-  participantsGrid: {
-    padding: 16,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    justifyContent: 'center',
-  },
-  participantCard: {
-    width: '46%',
-    aspectRatio: 0.9,
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5,
-    borderColor: Colors.surfaceBorder,
-    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
-    overflow: 'hidden',
+    paddingHorizontal: 24,
   },
-  avatarPulsingContainer: {
-    padding: 8,
-  },
-  participantTag: {
-    position: 'absolute',
-    bottom: 10,
-    backgroundColor: 'rgba(11, 14, 20, 0.85)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  ringHalo: {
+    padding: 14,
     borderRadius: 999,
+    borderWidth: 2,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
   },
-  participantName: {
+  calleeName: {
     color: Colors.textPrimary,
-    fontSize: 11.5,
+    fontSize: 22,
+    fontWeight: '800',
+    marginTop: 18,
+    textAlign: 'center',
+  },
+  statusLine: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    marginTop: 8,
+  },
+  ringTimer: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+    letterSpacing: 1,
+  },
+  invitedRow: {
+    gap: 8,
+    paddingTop: 22,
+    paddingHorizontal: 4,
+  },
+  invitedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    maxWidth: 150,
+  },
+  invitedName: {
+    color: Colors.textSecondary,
+    fontSize: 11,
     fontWeight: '600',
+    flexShrink: 1,
   },
   hudDock: {
     flexDirection: 'row',
@@ -383,14 +433,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 12,
   },
-  hudButtonDanger: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-  },
   hudButtonPrimary: {
     backgroundColor: 'rgba(99, 102, 241, 0.15)',
-  },
-  hudButtonRecording: {
-    backgroundColor: 'rgba(239, 68, 68, 0.25)',
   },
   hudButtonEndCall: {
     backgroundColor: Colors.rose,
@@ -406,5 +450,19 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: 10,
     fontWeight: '600',
+  },
+  fallbackTitle: {
+    color: Colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  fallbackBody: {
+    color: Colors.textSecondary,
+    fontSize: 12.5,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  fallbackEndBtn: {
+    marginTop: 24,
   },
 });

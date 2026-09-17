@@ -4,7 +4,7 @@ apply plugin: "com.facebook.react"
 
 /**
  * React Native Configuration
- * Enables Hermes bytecode compilation for ultra-compact APK size (<10MB).
+ * Enables Hermes bytecode compilation to keep the APK as compact as possible.
  */
 react {
     autolinkLibrariesWithApp()
@@ -12,9 +12,18 @@ react {
 
 /**
  * Set this to true to create separate APKs per CPU architecture.
- * This is CRITICAL for achieving < 10MB APK binary sizes!
- * Universal APKs bundle 4 architectures (~28MB).
- * Separate per-CPU APKs are only ~7MB - 8.5MB.
+ * This is CRITICAL for keeping the download size down, because react-native-webrtc
+ * ships a large native libwebrtc binary per ABI.
+ *
+ * Size budget (measured, release + R8 + Hermes):
+ *   arm64-v8a   ~26MB
+ *   armeabi-v7a ~18MB
+ *   x86_64      ~27MB
+ *   universal   ~87MB  (all ABIs - avoid shipping this one)
+ *
+ * The former "<10MB" target predates real audio/video calling and is no longer
+ * attainable: libwebrtc alone accounts for the bulk of the increase. Ship the
+ * per-ABI splits, not the universal APK.
  */
 def enableSeparateBuildPerCPUArchitecture = true
 
@@ -49,7 +58,7 @@ android {
         abi {
             reset()
             enable enableSeparateBuildPerCPUArchitecture
-            universalApk false  // Do NOT bundle all architectures into one large APK
+            universalApk true  // Generate universal APK alongside per-CPU APKs
             include "arm64-v8a", "armeabi-v7a", "x86_64"
         }
     }

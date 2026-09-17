@@ -1,8 +1,10 @@
 from typing import List, Optional, Dict, Any
+import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import delete
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -71,6 +73,35 @@ async def mark_notifications_read(
 
     await db.commit()
     return success_response({"message": "Notifications marked as read."})
+
+@router.delete("/{notification_id}")
+async def delete_notification_endpoint(
+    notification_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        n_uuid = uuid.UUID(str(notification_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid notification ID format")
+
+    stmt = delete(Notification).where(
+        Notification.id == n_uuid,
+        Notification.user_id == current_user.id
+    )
+    await db.execute(stmt)
+    await db.commit()
+    return success_response({"message": "Notification deleted successfully."})
+
+@router.delete("")
+async def clear_all_notifications_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = delete(Notification).where(Notification.user_id == current_user.id)
+    await db.execute(stmt)
+    await db.commit()
+    return success_response({"message": "All notifications cleared successfully."})
 
 @router.get("/preferences")
 async def get_preferences_endpoint(

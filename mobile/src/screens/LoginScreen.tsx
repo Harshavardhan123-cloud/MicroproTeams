@@ -19,21 +19,60 @@ interface LoginScreenProps {
   onLoginSuccess: () => void;
 }
 
+type ViewState = 'login' | 'register' | 'register-otp' | 'forgot-email' | 'forgot-reset';
+
+const getErrorMessage = (err: any, fallback: string): string => {
+  const detail =
+    err?.response?.data?.error?.message ||
+    err?.response?.data?.detail ||
+    err?.response?.data?.message ||
+    err?.message ||
+    fallback;
+  return typeof detail === 'string' ? detail : JSON.stringify(detail);
+};
+
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [view, setView] = useState<ViewState>('login');
+
+  // Shared login fields
   const [email, setEmail] = useState('admin@example.com');
   const [password, setPassword] = useState('password123');
-  const [username, setUsername] = useState('admin');
-  const [displayName, setDisplayName] = useState('Administrator');
+
+  // Registration fields
+  const [organizationName, setOrganizationName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [username, setUsername] = useState('');
+  const [registerOtp, setRegisterOtp] = useState('');
+  const [registerDevOtp, setRegisterDevOtp] = useState<string | null>(null);
+
+  // Forgot / reset password fields
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [resetOtp, setResetOtp] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetDevOtp, setResetDevOtp] = useState<string | null>(null);
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [serverModalVisible, setServerModalVisible] = useState(false);
 
   const currentServer = getTargetHostUrl();
   const isTunnel = currentServer.includes('trycloudflare.com');
 
-  const handleSubmit = async () => {
+  const resetTransientMessages = () => {
     setErrorMsg(null);
+    setInfoMsg(null);
+  };
+
+  const goTo = (next: ViewState) => {
+    resetTransientMessages();
+    setView(next);
+  };
+
+  const handleLogin = async () => {
+    resetTransientMessages();
     if (!email.trim() || !password.trim()) {
       setErrorMsg('Please enter both email and password');
       return;
@@ -41,28 +80,428 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
     setLoading(true);
     try {
-      if (isRegisterMode) {
-        await authStore.register({
-          email: email.trim(),
-          password: password.trim(),
-          username: username.trim() || email.split('@')[0],
-          display_name: displayName.trim() || username.trim(),
-        });
-      } else {
-        await authStore.login(email.trim(), password.trim());
-      }
+      await authStore.login(email.trim(), password.trim());
       onLoginSuccess();
     } catch (err: any) {
-      const detail =
-        err?.response?.data?.detail ||
-        err?.response?.data?.message ||
-        err.message ||
-        'Authentication failed';
-      setErrorMsg(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      setErrorMsg(getErrorMessage(err, 'Authentication failed'));
     } finally {
       setLoading(false);
     }
   };
+
+  const handleSendRegisterOtp = async () => {
+    resetTransientMessages();
+    if (
+      !organizationName.trim() ||
+      !firstName.trim() ||
+      !lastName.trim() ||
+      !username.trim() ||
+      !email.trim() ||
+      !password.trim()
+    ) {
+      setErrorMsg('Please fill in all fields to continue');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await authStore.sendOtp(email.trim(), 'REGISTER');
+      setInfoMsg(res.message || 'A 6-digit verification code has been sent to your email');
+      setRegisterDevOtp(res.dev_otp || null);
+      setRegisterOtp('');
+      setView('register-otp');
+    } catch (err: any) {
+      setErrorMsg(getErrorMessage(err, 'Failed to send verification code'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendRegisterOtp = async () => {
+    resetTransientMessages();
+    setLoading(true);
+    try {
+      const res = await authStore.sendOtp(email.trim(), 'REGISTER');
+      setInfoMsg('A new verification code has been sent to your email');
+      setRegisterDevOtp(res.dev_otp || null);
+    } catch (err: any) {
+      setErrorMsg(getErrorMessage(err, 'Failed to resend verification code'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCompleteRegister = async () => {
+    resetTransientMessages();
+    if (!registerOtp.trim()) {
+      setErrorMsg('Please enter the 6-digit verification code');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await authStore.register({
+        email: email.trim(),
+        password: password.trim(),
+        username: username.trim(),
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        organization_name: organizationName.trim(),
+        otp_code: registerOtp.trim(),
+      });
+      onLoginSuccess();
+    } catch (err: any) {
+      setErrorMsg(getErrorMessage(err, 'Registration failed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendForgotOtp = async () => {
+    resetTransientMessages();
+    if (!forgotEmail.trim()) {
+      setErrorMsg('Please enter your registered email address');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await authStore.forgotPassword(forgotEmail.trim());
+      setInfoMsg(res.message || 'A password reset code has been sent to your email');
+      setResetDevOtp(res.dev_otp || null);
+      setResetOtp('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setView('forgot-reset');
+    } catch (err: any) {
+      setErrorMsg(getErrorMessage(err, 'Failed to send reset code'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendForgotOtp = async () => {
+    resetTransientMessages();
+    setLoading(true);
+    try {
+      const res = await authStore.forgotPassword(forgotEmail.trim());
+      setInfoMsg('A new reset code has been sent to your email');
+      setResetDevOtp(res.dev_otp || null);
+    } catch (err: any) {
+      setErrorMsg(getErrorMessage(err, 'Failed to resend reset code'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    resetTransientMessages();
+    if (!resetOtp.trim() || !newPassword.trim()) {
+      setErrorMsg('Please enter the verification code and a new password');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMsg('Passwords do not match');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await authStore.resetPassword(forgotEmail.trim(), resetOtp.trim(), newPassword.trim());
+      setEmail(forgotEmail.trim());
+      setPassword('');
+      setView('login');
+      setInfoMsg(res.message || 'Password reset successfully. Please sign in with your new password.');
+    } catch (err: any) {
+      setErrorMsg(getErrorMessage(err, 'Failed to reset password'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cardTitle = (): string => {
+    switch (view) {
+      case 'register':
+        return 'Create New Account';
+      case 'register-otp':
+        return 'Verify Your Email';
+      case 'forgot-email':
+        return 'Reset Password';
+      case 'forgot-reset':
+        return 'Enter Verification Code';
+      default:
+        return 'Sign in to Workspace';
+    }
+  };
+
+  const renderLogin = () => (
+    <>
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Email Address or Username</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="name@company.com"
+          placeholderTextColor={Colors.textMuted}
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Password</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="••••••••"
+          placeholderTextColor={Colors.textMuted}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+      </View>
+
+      <TouchableOpacity style={styles.submitBtn} onPress={handleLogin} disabled={loading} activeOpacity={0.8}>
+        {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.submitBtnText}>Sign In</Text>}
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.linkBtn} onPress={() => goTo('forgot-email')}>
+        <Text style={styles.linkText}>Forgot password?</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.switchModeBtn} onPress={() => goTo('register')}>
+        <Text style={styles.switchModeText}>Don't have an account? Create one</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  const renderRegister = () => (
+    <>
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Organization Name</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. Acme Software Solutions"
+          placeholderTextColor={Colors.textMuted}
+          value={organizationName}
+          onChangeText={setOrganizationName}
+        />
+      </View>
+
+      <View style={styles.row}>
+        <View style={[styles.inputGroup, styles.rowItem]}>
+          <Text style={styles.label}>First Name</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Alex"
+            placeholderTextColor={Colors.textMuted}
+            value={firstName}
+            onChangeText={setFirstName}
+          />
+        </View>
+        <View style={[styles.inputGroup, styles.rowItem]}>
+          <Text style={styles.label}>Last Name</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Vance"
+            placeholderTextColor={Colors.textMuted}
+            value={lastName}
+            onChangeText={setLastName}
+          />
+        </View>
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Username</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. alexv"
+          placeholderTextColor={Colors.textMuted}
+          value={username}
+          onChangeText={(v) => setUsername(v.toLowerCase().replace(/\s+/g, ''))}
+          autoCapitalize="none"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Work Email</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="name@company.com"
+          placeholderTextColor={Colors.textMuted}
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Password</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="••••••••"
+          placeholderTextColor={Colors.textMuted}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+      </View>
+
+      <TouchableOpacity style={styles.submitBtn} onPress={handleSendRegisterOtp} disabled={loading} activeOpacity={0.8}>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" size="small" />
+        ) : (
+          <Text style={styles.submitBtnText}>Send Verification Code</Text>
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.switchModeBtn} onPress={() => goTo('login')}>
+        <Text style={styles.switchModeText}>Already have an account? Sign In</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  const renderRegisterOtp = () => (
+    <>
+      <Text style={styles.stepDescription}>Enter the 6-digit code sent to {email.trim()}</Text>
+
+      {registerDevOtp ? (
+        <View style={styles.devOtpBox}>
+          <Text style={styles.devOtpLabel}>Local Dev OTP:</Text>
+          <Text style={styles.devOtpValue}>{registerDevOtp}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Verification Code</Text>
+        <TextInput
+          style={[styles.input, styles.otpInput]}
+          placeholder="123456"
+          placeholderTextColor={Colors.textMuted}
+          value={registerOtp}
+          onChangeText={(v) => setRegisterOtp(v.replace(/\D/g, '').slice(0, 6))}
+          keyboardType="number-pad"
+          maxLength={6}
+        />
+      </View>
+
+      <TouchableOpacity style={styles.submitBtn} onPress={handleCompleteRegister} disabled={loading} activeOpacity={0.8}>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" size="small" />
+        ) : (
+          <Text style={styles.submitBtnText}>Verify & Create Account</Text>
+        )}
+      </TouchableOpacity>
+
+      <View style={styles.linkRow}>
+        <TouchableOpacity onPress={() => goTo('register')}>
+          <Text style={styles.linkText}>← Edit Information</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleResendRegisterOtp} disabled={loading}>
+          <Text style={styles.linkTextAccent}>Resend Code</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  const renderForgotEmail = () => (
+    <>
+      <Text style={styles.stepDescription}>Enter your work email to receive a 6-digit recovery code</Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Email Address</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="name@company.com"
+          placeholderTextColor={Colors.textMuted}
+          value={forgotEmail}
+          onChangeText={setForgotEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+      </View>
+
+      <TouchableOpacity style={styles.submitBtn} onPress={handleSendForgotOtp} disabled={loading} activeOpacity={0.8}>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" size="small" />
+        ) : (
+          <Text style={styles.submitBtnText}>Send Reset Code</Text>
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.switchModeBtn} onPress={() => goTo('login')}>
+        <Text style={styles.switchModeText}>← Back to Sign In</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  const renderForgotReset = () => (
+    <>
+      <Text style={styles.stepDescription}>Enter the 6-digit code sent to {forgotEmail.trim()}</Text>
+
+      {resetDevOtp ? (
+        <View style={styles.devOtpBox}>
+          <Text style={styles.devOtpLabel}>Local Dev OTP:</Text>
+          <Text style={styles.devOtpValue}>{resetDevOtp}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Verification Code</Text>
+        <TextInput
+          style={[styles.input, styles.otpInput]}
+          placeholder="123456"
+          placeholderTextColor={Colors.textMuted}
+          value={resetOtp}
+          onChangeText={(v) => setResetOtp(v.replace(/\D/g, '').slice(0, 6))}
+          keyboardType="number-pad"
+          maxLength={6}
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>New Password</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="••••••••"
+          placeholderTextColor={Colors.textMuted}
+          value={newPassword}
+          onChangeText={setNewPassword}
+          secureTextEntry
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.label}>Confirm New Password</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="••••••••"
+          placeholderTextColor={Colors.textMuted}
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry
+        />
+      </View>
+
+      <TouchableOpacity style={styles.submitBtn} onPress={handleResetPassword} disabled={loading} activeOpacity={0.8}>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" size="small" />
+        ) : (
+          <Text style={styles.submitBtnText}>Reset Password</Text>
+        )}
+      </TouchableOpacity>
+
+      <View style={styles.linkRow}>
+        <TouchableOpacity onPress={() => goTo('forgot-email')}>
+          <Text style={styles.linkText}>← Change Email</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleResendForgotOtp} disabled={loading}>
+          <Text style={styles.linkTextAccent}>Resend Code</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -101,9 +540,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
         {/* Card */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            {isRegisterMode ? 'Create New Account' : 'Sign in to Workspace'}
-          </Text>
+          <Text style={styles.cardTitle}>{cardTitle()}</Text>
 
           {errorMsg ? (
             <View style={styles.errorBox}>
@@ -111,95 +548,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </View>
           ) : null}
 
-          {isRegisterMode ? (
-            <>
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Full Display Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. John Carter"
-                  placeholderTextColor={Colors.textMuted}
-                  value={displayName}
-                  onChangeText={setDisplayName}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Username</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. jcarter"
-                  placeholderTextColor={Colors.textMuted}
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                />
-              </View>
-            </>
+          {infoMsg ? (
+            <View style={styles.infoBox}>
+              <Text style={styles.infoText}>{infoMsg}</Text>
+            </View>
           ) : null}
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email Address or Username</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="name@company.com"
-              placeholderTextColor={Colors.textMuted}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="••••••••"
-              placeholderTextColor={Colors.textMuted}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-          </View>
-
-          {/* Submit Button */}
-          <TouchableOpacity
-            style={styles.submitBtn}
-            onPress={handleSubmit}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Text style={styles.submitBtnText}>
-                {isRegisterMode ? 'Register Account' : 'Sign In'}
-              </Text>
-            )}
-          </TouchableOpacity>
-
-          {/* Mode Switcher */}
-          <TouchableOpacity
-            style={styles.switchModeBtn}
-            onPress={() => {
-              setIsRegisterMode(!isRegisterMode);
-              setErrorMsg(null);
-            }}
-          >
-            <Text style={styles.switchModeText}>
-              {isRegisterMode
-                ? 'Already have an account? Sign In'
-                : "Don't have an account? Create one"}
-            </Text>
-          </TouchableOpacity>
+          {view === 'login' && renderLogin()}
+          {view === 'register' && renderRegister()}
+          {view === 'register-otp' && renderRegisterOtp()}
+          {view === 'forgot-email' && renderForgotEmail()}
+          {view === 'forgot-reset' && renderForgotReset()}
         </View>
 
         {/* Quick Demo Credentials Footer */}
-        <View style={styles.demoFooter}>
-          <Text style={styles.demoTitle}>Demo Credentials Available:</Text>
-          <Text style={styles.demoCreds}>admin@example.com / password123</Text>
-        </View>
+        {view === 'login' ? (
+          <View style={styles.demoFooter}>
+            <Text style={styles.demoTitle}>Demo Credentials Available:</Text>
+            <Text style={styles.demoCreds}>admin@example.com / password123</Text>
+          </View>
+        ) : null}
       </ScrollView>
 
       <ServerConfigModal
@@ -312,6 +680,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
   },
+  stepDescription: {
+    color: Colors.textSecondary,
+    fontSize: 12.5,
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
   errorBox: {
     backgroundColor: 'rgba(239, 68, 68, 0.12)',
     borderWidth: 1,
@@ -324,6 +699,50 @@ const styles = StyleSheet.create({
     color: Colors.rose,
     fontSize: 12.5,
     fontWeight: '600',
+  },
+  infoBox: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  infoText: {
+    color: Colors.emerald,
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  devOtpBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.primaryGlow,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 16,
+  },
+  devOtpLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  devOtpValue: {
+    color: Colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 3,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  rowItem: {
+    flex: 1,
   },
   inputGroup: {
     marginBottom: 14,
@@ -344,6 +763,12 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: 14,
   },
+  otpInput: {
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 6,
+    textAlign: 'center',
+  },
   submitBtn: {
     backgroundColor: Colors.primary,
     borderRadius: 12,
@@ -361,6 +786,29 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
+  },
+  linkBtn: {
+    marginTop: 14,
+    alignItems: 'center',
+  },
+  linkText: {
+    color: Colors.textSecondary,
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  linkTextAccent: {
+    color: Colors.primary,
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: Colors.surfaceBorder,
   },
   switchModeBtn: {
     marginTop: 16,

@@ -338,8 +338,21 @@ class MeetingWebRTCManager {
       // 3. Create Send Transport
       console.log('[SFU] Creating Send Transport...');
       const sendTransportInfo = await this.request('createWebRtcTransport', { roomId: this.roomId });
-      this.sendTransport = this.device.createSendTransport(sendTransportInfo.params);
+      const defaultIceServers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ];
+      const sendParams = {
+        ...sendTransportInfo.params,
+        iceServers: sendTransportInfo.params?.iceServers || defaultIceServers
+      };
+      this.sendTransport = this.device.createSendTransport(sendParams);
       console.log('[SFU] Send transport created:', this.sendTransport.id);
+
+      this.sendTransport.on('connectionstatechange', (state: string) => {
+        console.log(`[SFU] Send transport connection state: ${state}`);
+      });
 
       this.sendTransport.on('connect', async ({ dtlsParameters }: any, callback: any, errback: any) => {
         try {
@@ -378,8 +391,16 @@ class MeetingWebRTCManager {
       // 4. Create Receive Transport
       console.log('[SFU] Creating Receive Transport...');
       const recvTransportInfo = await this.request('createWebRtcTransport', { roomId: this.roomId });
-      this.recvTransport = this.device.createRecvTransport(recvTransportInfo.params);
+      const recvParams = {
+        ...recvTransportInfo.params,
+        iceServers: recvTransportInfo.params?.iceServers || defaultIceServers
+      };
+      this.recvTransport = this.device.createRecvTransport(recvParams);
       console.log('[SFU] Receive transport created:', this.recvTransport.id);
+
+      this.recvTransport.on('connectionstatechange', (state: string) => {
+        console.log(`[SFU] Receive transport connection state: ${state}`);
+      });
 
       this.recvTransport.on('connect', async ({ dtlsParameters }: any, callback: any, errback: any) => {
         try {

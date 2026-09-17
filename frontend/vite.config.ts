@@ -22,6 +22,9 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,
+    watch: {
+      ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.cache/**'],
+    },
     proxy: {
       '/api/v1/ws': {
         target: 'ws://localhost:8000',
@@ -60,6 +63,36 @@ export default defineConfig({
             if (err.code === 'ECONNRESET' || err.message?.includes('ended by the other party')) return;
           });
         }
+      },
+    },
+  },
+  build: {
+    target: 'es2020',
+    sourcemap: false,
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (
+              id.includes('react/') ||
+              id.includes('react-dom/') ||
+              id.includes('react-router-dom/') ||
+              id.includes('@tanstack/react-query')
+            ) {
+              return 'react-vendor';
+            }
+            if (id.includes('mediasoup-client') || id.includes('socket.io-client')) {
+              return 'media-vendor';
+            }
+            if (id.includes('lucide-react')) {
+              return 'lucide-vendor';
+            }
+            if (id.includes('axios') || id.includes('zustand')) {
+              return 'utils-vendor';
+            }
+          }
+        },
       },
     },
   },

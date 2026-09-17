@@ -1,11 +1,21 @@
 package com.micropro.commute
 
+import android.os.Bundle
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 class MainActivity : ReactActivity() {
+
+  /**
+   * Required by react-native-screens (used by React Navigation): passing null here
+   * prevents the Android fragment manager from restoring stale view state after the
+   * activity is recreated, which otherwise crashes navigation on process death.
+   */
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(null)
+  }
 
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule

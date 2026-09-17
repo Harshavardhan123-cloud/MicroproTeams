@@ -11,11 +11,32 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
+
+    <!--
+      Bluetooth headset (SCO) audio routing during calls.
+      BLUETOOTH_CONNECT covers Android 12+/API 31. minSdkVersion is 24, so API 24-30
+      devices still need the legacy BLUETOOTH permission for AudioManager SCO routing;
+      maxSdkVersion="30" keeps it off the runtime-permission surface on newer OSes.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+
+    <!-- Notifications (required to post any notification on Android 13+/API 33) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Background Call Services -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!--
+      Screen sharing (mediaDevices.getDisplayMedia()).
+      react-native-webrtc runs MediaProjection from a foreground service; targetSdkVersion
+      is 34, and API 34 requires the granular FGS-type permission that matches the
+      service's android:foregroundServiceType or startForeground() throws
+      SecurityException the moment the user starts sharing.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- Optional Hardware Features -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -54,8 +75,24 @@
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.DEFAULT" />
             <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" android:host="outdoors-introduction-commodities-gender.trycloudflare.com" android:pathPrefix="/meet/" />
+            <data android:scheme="https" android:host="violin-providers-entries-content.trycloudflare.com" android:pathPrefix="/meet/" />
         </intent-filter>
       </activity>
+
+      <!--
+        Screen-share foreground service. The class ships inside the react-native-webrtc
+        AAR (com.oney.WebRTCModule.MediaProjectionService) and its library manifest already
+        declares it with android:foregroundServiceType="mediaProjection"; it is re-declared
+        here only to make the app's screen-share surface explicit and to pin
+        android:exported="false". Values must stay identical to the library's or the
+        manifest merger will fail.
+
+        NOTE: the service is inert until MainApplication.onCreate() sets
+        WebRTCModuleOptions.getInstance().enableMediaProjectionService = true.
+      -->
+      <service
+        android:name="com.oney.WebRTCModule.MediaProjectionService"
+        android:foregroundServiceType="mediaProjection"
+        android:exported="false" />
     </application>
 </manifest>

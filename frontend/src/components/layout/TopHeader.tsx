@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, HelpCircle, LogOut, Settings, Moon, Sun, MessageSquare, Users as UsersIcon, Check, BookOpen, Command, LifeBuoy, Info, PhoneCall, Trash2, X } from 'lucide-react';
+import { Search, Bell, HelpCircle, LogOut, Settings, Moon, Sun, MessageSquare, Users as UsersIcon, Check, BookOpen, Command, LifeBuoy, Info, PhoneCall, Phone, Video, Calendar, Trash2, X } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useCallStore } from '../../stores/callStore';
@@ -20,7 +20,11 @@ const STATUS_CONFIG: Record<string, { label: string; dotClass: string; textClass
 
 function formatRelativeTime(isoString?: string): string {
   if (!isoString) return 'Just now';
-  const diffMs = Date.now() - new Date(isoString).getTime();
+  const cleanStr = isoString.endsWith('Z') || isoString.includes('+') ? isoString : `${isoString}Z`;
+  const timeMs = new Date(cleanStr).getTime();
+  if (isNaN(timeMs)) return 'Just now';
+  const diffMs = Date.now() - timeMs;
+  if (diffMs < 0) return 'Just now';
   const diffMins = Math.floor(diffMs / 60000);
   if (diffMins < 1) return 'Just now';
   if (diffMins < 60) return `${diffMins}m ago`;
@@ -32,9 +36,9 @@ function formatRelativeTime(isoString?: string): string {
 
 export const TopHeader: React.FC = () => {
   const { user, logout, setPresence } = useAuthStore();
-  const { setUserSettingsOpen, setShortcutsOpen, setDocsOpen, setAboutOpen } = useUIStore();
+  const { setUserSettingsOpen, setShortcutsOpen, setDocsOpen, setAboutOpen, setActiveTab, setSelectedConversationId } = useUIStore();
   const { callState, canRejoin, setIsCallMinimized, rejoinLastCall } = useCallStore();
-  const { notifications, setNotifications, markAllNotifsRead: markAllStoreRead, clearAllNotifications, removeNotification } = useNotificationStore();
+  const { notifications, setNotifications, markAllNotifsRead: markAllStoreRead, markNotifRead, clearAllNotifications, removeNotification } = useNotificationStore();
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -58,18 +62,20 @@ export const TopHeader: React.FC = () => {
   const loadNotifications = async () => {
     try {
       const res = await notificationService.getNotifications();
-      if (res.notifications.length > 0) {
-        const formatted = res.notifications.map((n) => ({
-          id: n.id,
-          title: n.title,
-          body: n.body,
-          time: formatRelativeTime(n.created_at),
-          unread: !n.is_read,
-          type: n.type || 'system',
-          created_at: n.created_at
-        }));
-        setNotifications(formatted);
-      }
+      const list = res.notifications || [];
+      const formatted = list.map((n: any) => ({
+        id: n.id || n.notificationId,
+        title: n.title,
+        body: n.body,
+        time: formatRelativeTime(n.created_at),
+        unread: n.status ? n.status === 'UNREAD' : (n.is_read !== undefined ? !n.is_read : true),
+        type: n.type || 'system',
+        created_at: n.created_at,
+        conversationId: n.conversation_id || n.conversationId,
+        callId: n.call_id || n.callId,
+        meetingId: n.meeting_id || n.meetingId
+      }));
+      setNotifications(formatted);
     } catch (err) {
       console.error('Fetch notifications error:', err);
     }
@@ -103,8 +109,10 @@ export const TopHeader: React.FC = () => {
     localStorage.setItem('teams_theme', theme);
     if (theme === 'light') {
       document.documentElement.classList.add('light-mode');
+      document.documentElement.classList.remove('dark');
     } else {
       document.documentElement.classList.remove('light-mode');
+      document.documentElement.classList.add('dark');
     }
   }, [theme]);
 
@@ -157,6 +165,66 @@ export const TopHeader: React.FC = () => {
     } catch (err) {
       console.error('Mark notifications read error:', err);
     }
+  };
+
+  const handleClearAll = async () => {
+    clearAllNotifications();
+    try {
+      await notificationService.clearAllNotifications();
+    } catch (err) {
+      console.error('Clear all notifications error:', err);
+    }
+  };
+
+  const handleRemoveNotification = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    removeNotification(id);
+    try {
+      await notificationService.deleteNotification(id);
+    } catch (err) {
+      console.error('Delete notification error:', err);
+    }
+  };
+
+  const handleNotificationClick = async (n: any) => {
+    if (n.unread && n.id) {
+      markNotifRead(n.id);
+      try {
+        await notificationService.markAsRead(false, [n.id]);
+      } catch (err) {
+        console.error('Mark notification read error:', err);
+      }
+    }
+
+    setIsNotificationsOpen(false);
+
+    const typeLower = (n.type || '').toLowerCase();
+    if (n.conversationId || typeLower.includes('message') || typeLower === 'chat') {
+      setActiveTab('chat');
+      if (n.conversationId) {
+        setSelectedConversationId(n.conversationId);
+      }
+    } else if (typeLower.includes('call')) {
+      setActiveTab('calls');
+    } else if (typeLower.includes('meeting') || n.meetingId) {
+      setActiveTab('calendar');
+    } else {
+      setActiveTab('activity');
+    }
+  };
+
+  const getNotifIcon = (type: string) => {
+    const t = (type || '').toLowerCase();
+    if (t.includes('chat') || t.includes('message') || t === 'direct_message') {
+      return <MessageSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />;
+    }
+    if (t.includes('call')) {
+      return <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />;
+    }
+    if (t.includes('meeting')) {
+      return <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />;
+    }
+    return <Bell className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />;
   };
 
   const unreadCount = notifications.filter((n) => n.unread).length;
@@ -308,7 +376,7 @@ export const TopHeader: React.FC = () => {
                   )}
                   {notifications.length > 0 && (
                     <button
-                      onClick={clearAllNotifications}
+                      onClick={handleClearAll}
                       className="text-[10px] text-rose-400 hover:underline font-medium flex items-center gap-1"
                       title="Clear all"
                     >
@@ -321,33 +389,35 @@ export const TopHeader: React.FC = () => {
 
               <div className="divide-y divide-white/5 max-h-72 overflow-y-auto">
                 {notifications.length === 0 ? (
-                  <div className="p-4 text-center text-mc-muted text-xs">
-                    Inbox zero. No new notifications.
+                  <div className="p-6 text-center text-mc-muted text-xs flex flex-col items-center gap-2">
+                    <Bell className="w-6 h-6 text-mc-muted/40" />
+                    <span>Inbox zero. No new notifications.</span>
                   </div>
                 ) : (
                   notifications.map((n) => (
                     <div
                       key={n.id}
-                      className={`p-3 transition-colors flex items-start justify-between gap-2 group ${
-                        n.unread ? 'bg-indigo-600/10' : 'hover:bg-white/5'
+                      onClick={() => handleNotificationClick(n)}
+                      className={`p-3 transition-all flex items-start justify-between gap-2.5 group cursor-pointer ${
+                        n.unread ? 'bg-indigo-600/10 hover:bg-indigo-600/20' : 'hover:bg-white/5'
                       }`}
                     >
+                      <div className="mt-0.5">
+                        {getNotifIcon(n.type)}
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="text-xs text-white font-medium leading-snug truncate">{n.title}</p>
+                          <p className="text-xs text-white font-semibold leading-snug truncate">{n.title}</p>
                           {n.unread && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 mt-1" />}
                         </div>
-                        {n.body && <p className="text-[11px] text-mc-muted mt-0.5 line-clamp-2">{n.body}</p>}
-                        <span className="text-[10px] text-mc-muted mt-1 block">
+                        {n.body && <p className="text-[11px] text-mc-muted mt-0.5 line-clamp-2 leading-relaxed">{n.body}</p>}
+                        <span className="text-[10px] text-mc-muted/80 mt-1 block font-mono">
                           {formatRelativeTime(n.created_at || new Date().toISOString())}
                         </span>
                       </div>
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeNotification(n.id);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-mc-muted hover:text-rose-400 hover:bg-rose-500/10 rounded transition-all shrink-0"
+                        onClick={(e) => handleRemoveNotification(n.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-mc-muted hover:text-rose-400 hover:bg-rose-500/10 rounded transition-all shrink-0 mt-0.5"
                         title="Dismiss notification"
                       >
                         <X className="w-3.5 h-3.5" />

@@ -1,7 +1,7 @@
 import { apiClient } from '../api/client';
 import { MeetingSummary, ActionItem, TranscriptSegment } from '../types/meetingAI';
 
-const SPEECH_API_BASE = 'http://192.168.1.199:8080';
+const SPEECH_API_BASE = (import.meta as any).env?.VITE_SPEECH_API_BASE || 'http://localhost:8080';
 
 export interface DiarizationSegment {
   start_time: number;

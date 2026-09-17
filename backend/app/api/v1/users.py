@@ -32,7 +32,8 @@ async def list_users(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    stmt = select(User).where(User.organization_id == current_user.organization_id)
+    from sqlalchemy.orm import selectinload
+    stmt = select(User).options(selectinload(User.organization_unit)).where(User.organization_id == current_user.organization_id)
     if q:
         search_pattern = f"%{q.strip()}%"
         stmt = stmt.where(
@@ -59,6 +60,8 @@ async def list_users(
             "avatar_url": u.avatar_url,
             "job_title": u.job_title,
             "department": u.department,
+            "organization_unit_id": str(u.organization_unit_id) if u.organization_unit_id else None,
+            "organization_unit_name": u.organization_unit.name if u.organization_unit else None,
             "presence": effective_presence,
             "status_message": u.status_message,
             "is_active": u.is_active
@@ -66,26 +69,37 @@ async def list_users(
     return success_response(data)
 
 @router.get("/me")
-async def get_user_me(current_user: User = Depends(get_current_user)):
-    uid_str = str(current_user.id)
+async def get_user_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy.orm import selectinload
+    me_res = await db.execute(
+        select(User).options(selectinload(User.organization_unit)).where(User.id == current_user.id)
+    )
+    user_me = me_res.scalar_one_or_none() or current_user
+
+    uid_str = str(user_me.id)
     is_active_ws = uid_str in ws_manager.user_connections and bool(ws_manager.user_connections[uid_str])
-    raw_presence = current_user.presence.value if hasattr(current_user.presence, "value") else str(current_user.presence or "offline")
+    raw_presence = user_me.presence.value if hasattr(user_me.presence, "value") else str(user_me.presence or "offline")
     effective_presence = "available" if (is_active_ws and raw_presence == "offline") else raw_presence
 
     return success_response({
         "id": uid_str,
-        "email": current_user.email,
-        "username": current_user.username,
-        "display_name": current_user.display_name,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
-        "avatar_url": current_user.avatar_url,
-        "job_title": current_user.job_title,
-        "department": current_user.department,
+        "email": user_me.email,
+        "username": user_me.username,
+        "display_name": user_me.display_name,
+        "first_name": user_me.first_name,
+        "last_name": user_me.last_name,
+        "avatar_url": user_me.avatar_url,
+        "job_title": user_me.job_title,
+        "department": user_me.department,
+        "organization_unit_id": str(user_me.organization_unit_id) if user_me.organization_unit_id else None,
+        "organization_unit_name": user_me.organization_unit.name if user_me.organization_unit else None,
         "presence": effective_presence,
-        "status_message": current_user.status_message,
-        "is_active": current_user.is_active,
-        "organization_id": str(current_user.organization_id)
+        "status_message": user_me.status_message,
+        "is_active": user_me.is_active,
+        "organization_id": str(user_me.organization_id)
     })
 
 @router.put("/me/presence")

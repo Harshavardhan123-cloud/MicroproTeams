@@ -8,6 +8,9 @@ import { UserAvatar } from '../common/UserAvatar';
 import { DeleteMessageModal } from '../modals/DeleteMessageModal';
 import { formatISTTime } from '../../utils/dateUtils';
 import { AttachmentCard } from './AttachmentCard';
+import { MediaAnnotationResult } from './MediaAnnotationModal';
+import { copyToClipboard } from '../../utils/clipboard';
+import { useNotificationStore } from '../../stores/notificationStore';
 
 interface MessageItemProps {
   message: Message;
@@ -69,16 +72,80 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
     addAttachment(name, url);
   }
 
+  const isViewOnce = rawContent.includes('[View Once Media]') || !!(message as any).is_view_once;
   const displayContent = rawContent
     .replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '')
     .replace(/📁\s*Attachment:\s*\[[^\]]+\]\([^)]+\)/gi, '')
     .trim();
+  const cleanDisplayContent = displayContent.replace(/🔒\s*\[View Once Media\]/gi, '').trim();
+
+  const handleAnnotateSend = async (result: MediaAnnotationResult) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', result.file);
+      const uploadRes = await apiClient.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileData = uploadRes.data.data || uploadRes.data;
+      const fileName = fileData.name || fileData.original_name || fileData.file_name || result.file.name;
+      const fileUrl = fileData.file_url || fileData.url || fileData.download_url || result.previewUrl;
+
+      const attachmentPayload = {
+        file_id: fileData.id,
+        name: fileName,
+        size: fileData.size || result.file.size,
+        type: fileData.mime_type || result.file.type,
+        url: fileUrl
+      };
+
+      // Build updated content: strip old attachment markdown, keep caption
+      let baseContent = (message.content || '')
+        .replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '')
+        .replace(/📁\s*Attachment:\s*\[[^\]]+\]\([^)]+\)/gi, '')
+        .trim();
+
+      const captionPart = result.caption ? result.caption.trim() : '';
+      const attText = `[Attachment: ${fileName}](${getMediaUrl(fileUrl)})`;
+      const finalContent = captionPart
+        ? `${captionPart}\n\n${attText}`
+        : (baseContent ? `${baseContent}\n\n${attText}` : attText);
+
+      // PATCH the existing message — replace attachment in place
+      await apiClient.patch(`/messages/${message.id}`, {
+        content: finalContent,
+        attachments: [attachmentPayload]
+      });
+
+      useNotificationStore.getState().addToast({
+        title: 'Image Updated',
+        body: 'Your edited image has been updated in place.',
+        type: 'info'
+      });
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to update annotated image:', err);
+      useNotificationStore.getState().addToast({
+        title: 'Update Error',
+        body: 'Failed to update annotated image.',
+        type: 'info'
+      });
+    }
+  };
 
   const handleCopyText = async () => {
+    const textToCopy = cleanDisplayContent || displayContent || message.content || '';
+    if (!textToCopy) return;
     try {
-      await navigator.clipboard.writeText(message.content);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
+      const success = await copyToClipboard(textToCopy);
+      if (success) {
+        setIsCopied(true);
+        useNotificationStore.getState().addToast({
+          title: 'Copied',
+          body: 'Message copied to clipboard',
+          type: 'info'
+        });
+        setTimeout(() => setIsCopied(false), 2000);
+      }
     } catch (err) {
       console.error('Failed to copy text:', err);
     }
@@ -191,12 +258,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
                     url={att.url}
                     size={att.size}
                     type={att.type}
+                    messageId={message.id}
+                    isViewOnce={isViewOnce}
+                    caption={cleanDisplayContent}
+                    onAnnotateSend={handleAnnotateSend}
                   />
                 ))}
               </div>
             )}
-            {displayContent.length > 0 && (
-              <p className="text-xs text-mc-text leading-relaxed whitespace-pre-wrap select-text">{displayContent}</p>
+            {cleanDisplayContent.length > 0 && (
+              <p className="text-xs text-mc-text leading-relaxed whitespace-pre-wrap select-text">{cleanDisplayContent}</p>
             )}
           </div>
         )}
@@ -295,6 +366,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, onOpenThread,
         onClose={() => setShowDeleteModal(false)}
         onConfirm={handleConfirmDelete}
         isAdmin={!!isAdmin}
+        canDeleteForEveryone={isOwner || !!isAdmin}
         itemType="message"
       />
     </div>

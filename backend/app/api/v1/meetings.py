@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
@@ -57,6 +58,11 @@ async def list_meetings(
 ):
     res = await db.execute(
         select(Meeting)
+        # `policy` and `participants` are read below by format_meeting. Without
+        # eager loading, touching them here lazy-loads outside the async
+        # greenlet context and raises MissingGreenlet, so listing meetings
+        # 500s as soon as the organization has any meeting at all.
+        .options(selectinload(Meeting.participants), selectinload(Meeting.policy))
         .where(Meeting.organization_id == current_user.organization_id)
         .order_by(Meeting.created_at.desc())
     )

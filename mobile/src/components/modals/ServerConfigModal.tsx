@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   Modal,
+  ScrollView,
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
@@ -13,7 +14,11 @@ import { Colors } from '../../theme/colors';
 import {
   getTargetHostUrl,
   setTargetHostUrl,
+  getSfuHostUrl,
+  setSfuHostUrl,
+  getDerivedSfuUrl,
   DEFAULT_SERVER,
+  LAN_SERVER,
   CLOUDFLARE_TUNNEL_URL,
 } from '../../api/client';
 
@@ -34,6 +39,22 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
     success: boolean;
     message: string;
   } | null>(null);
+
+  // Explicit SFU override. '' is valid and means "derive from the host above".
+  const [sfuUrl, setSfuUrl] = useState(getSfuHostUrl());
+  const [sfuTesting, setSfuTesting] = useState(false);
+  const [sfuTestResult, setSfuTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+
+  // Preview the derivation against what is currently typed, not only what is
+  // saved, so editing the host above updates the SFU placeholder live.
+  const derivedSfuUrl = getDerivedSfuUrl(serverUrl);
+  const proxySfuUrl = `${serverUrl.trim().replace(/\/$/, '')}/sfu`;
+  const trimmedSfuUrl = sfuUrl.trim().replace(/\/$/, '');
+  const directPresetActive = trimmedSfuUrl === derivedSfuUrl;
+  const proxyPresetActive = /\/sfu$/.test(trimmedSfuUrl);
 
   const handleTest = async (urlToTest: string) => {
     setTesting(true);
@@ -71,10 +92,67 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
     }
   };
 
-  const handleSave = async (url: string) => {
+  // The SFU exposes no HTTP routes at all (no /health), so this probes the
+  // socket.io handshake endpoint instead. It must stay a plain GET: never emit
+  // a socket.io *event* as a probe — the SFU invokes ack callbacks unguarded,
+  // so an emit without an ack takes the whole media server down.
+  const handleSfuTest = async (urlToTest: string) => {
+    const clean = (urlToTest || '').trim().replace(/\/$/, '') || derivedSfuUrl;
+    setSfuTesting(true);
+    setSfuTestResult(null);
+
+    // A host ending in /sfu is the nginx-proxied form and keeps that prefix;
+    // anything else talks to the SFU's own origin at the default path.
+    const probe = `${clean.replace(/\/sfu\/?$/, '')}${
+      /\/sfu\/?$/.test(clean) ? '/sfu' : ''
+    }/socket.io/?EIO=4&transport=polling`;
+
+    try {
+      const startTime = Date.now();
+      const res = await axios.get(probe, {
+        timeout: 5000,
+        headers: {
+          'Bypass-Tunnel-Reminder': 'true',
+          'ngrok-skip-browser-warning': 'true',
+        },
+      });
+      const latency = Date.now() - startTime;
+      // A socket.io handshake replies 200 with a body starting `0{"sid":`.
+      const body =
+        typeof res.data === 'string' ? res.data : JSON.stringify(res.data ?? '');
+      if (res.status >= 200 && res.status < 300 && body.includes('"sid"')) {
+        setSfuTestResult({
+          success: true,
+          message: `Media server reachable! (${latency}ms latency)`,
+        });
+      } else if (res.status >= 200 && res.status < 300) {
+        setSfuTestResult({
+          success: false,
+          message: 'Host replied, but no socket.io server answered at that path.',
+        });
+      } else {
+        setSfuTestResult({
+          success: false,
+          message: `Media server returned status ${res.status}`,
+        });
+      }
+    } catch (err: any) {
+      setSfuTestResult({
+        success: false,
+        message: err.message || 'Media server unreachable. Check host & port 3010.',
+      });
+    } finally {
+      setSfuTesting(false);
+    }
+  };
+
+  const handleSave = async (url: string, sfu: string) => {
     const cleanUrl = url.trim().replace(/\/$/, '');
+    const cleanSfu = (sfu || '').trim().replace(/\/$/, '');
     await setTargetHostUrl(cleanUrl);
+    await setSfuHostUrl(cleanSfu);
     setServerUrl(cleanUrl);
+    setSfuUrl(cleanSfu);
     if (onServerChanged) onServerChanged();
     onClose();
   };
@@ -90,27 +168,17 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          <ScrollView
+            style={styles.scrollArea}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
           <Text style={styles.description}>
             Connect your mobile device to the Micropro Commute backend server:
           </Text>
 
           {/* Preset Buttons */}
           <View style={styles.presetsContainer}>
-            <TouchableOpacity
-              style={[
-                styles.presetBtn,
-                serverUrl === DEFAULT_SERVER && styles.presetBtnActive,
-              ]}
-              onPress={() => {
-                setServerUrl(DEFAULT_SERVER);
-                handleTest(DEFAULT_SERVER);
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.presetTitle}>LAN Backend</Text>
-              <Text style={styles.presetSubtitle}>192.168.1.147:8000</Text>
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={[
                 styles.presetBtn,
@@ -125,6 +193,21 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
               <Text style={styles.presetTitle}>Cloudflare Tunnel</Text>
               <Text style={styles.presetSubtitle}>Internet HTTPS & WebRTC</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.presetBtn,
+                serverUrl === LAN_SERVER && styles.presetBtnActive,
+              ]}
+              onPress={() => {
+                setServerUrl(LAN_SERVER);
+                handleTest(LAN_SERVER);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.presetTitle}>LAN Backend</Text>
+              <Text style={styles.presetSubtitle}>192.168.1.147:8000</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Custom URL Input */}
@@ -134,7 +217,7 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
               style={styles.input}
               value={serverUrl}
               onChangeText={setServerUrl}
-              placeholder="http://192.168.1.147:8000"
+              placeholder="https://violin-providers-entries-content.trycloudflare.com"
               placeholderTextColor={Colors.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -166,6 +249,99 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
             </View>
           ) : null}
 
+          {/* ── Media Server (SFU) ─────────────────────────────────────── */}
+          <View style={styles.divider} />
+
+          <Text style={styles.inputLabel}>Media Server (SFU)</Text>
+
+          <View style={styles.presetsContainer}>
+            <TouchableOpacity
+              style={[
+                styles.presetBtn,
+                directPresetActive && styles.presetBtnActive,
+              ]}
+              onPress={() => {
+                setSfuUrl(derivedSfuUrl);
+                setSfuTestResult(null);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.presetTitle}>Direct :3010</Text>
+              <Text style={styles.presetSubtitle} numberOfLines={1}>
+                {derivedSfuUrl}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.presetBtn,
+                proxyPresetActive && styles.presetBtnActive,
+              ]}
+              onPress={() => {
+                setSfuUrl(proxySfuUrl);
+                setSfuTestResult(null);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.presetTitle}>Via Proxy (/sfu)</Text>
+              <Text style={styles.presetSubtitle} numberOfLines={1}>
+                Backend origin + /sfu
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.input}
+              value={sfuUrl}
+              onChangeText={setSfuUrl}
+              placeholder={derivedSfuUrl}
+              placeholderTextColor={Colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={styles.helperText}>
+              Leave blank to use {derivedSfuUrl}
+            </Text>
+          </View>
+
+          <View style={styles.sfuActionRow}>
+            <TouchableOpacity
+              style={styles.testButton}
+              onPress={() => handleSfuTest(sfuUrl)}
+              disabled={sfuTesting}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.testButtonText}>Ping Media Server</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* SFU Test Status */}
+          {sfuTesting ? (
+            <View style={styles.testStatusRow}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+              <Text style={styles.testStatusText}>Testing media server...</Text>
+            </View>
+          ) : sfuTestResult ? (
+            <View
+              style={[
+                styles.resultCard,
+                sfuTestResult.success ? styles.resultSuccess : styles.resultError,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.resultText,
+                  { color: sfuTestResult.success ? Colors.emerald : Colors.rose },
+                ]}
+              >
+                {sfuTestResult.success ? '● ' : '▲ '}
+                {sfuTestResult.message}
+              </Text>
+            </View>
+          ) : null}
+          </ScrollView>
+
           {/* Actions */}
           <View style={styles.actionRow}>
             <TouchableOpacity
@@ -179,7 +355,7 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
 
             <TouchableOpacity
               style={styles.saveButton}
-              onPress={() => handleSave(serverUrl)}
+              onPress={() => handleSave(serverUrl, sfuUrl)}
               activeOpacity={0.8}
             >
               <Text style={styles.saveButtonText}>Save & Apply</Text>
@@ -212,6 +388,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 20,
     elevation: 10,
+    // Cap the height so the (now taller) content scrolls instead of running
+    // off small screens; the action row below stays pinned.
+    maxHeight: '90%',
+  },
+  scrollArea: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
   header: {
     flexDirection: 'row',
@@ -276,8 +459,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 6,
   },
+  helperText: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 6,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: Colors.surfaceBorder,
+    marginBottom: 16,
+  },
   inputRow: {
     marginBottom: 16,
+  },
+  sfuActionRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
   },
   input: {
     backgroundColor: Colors.surfaceLight,

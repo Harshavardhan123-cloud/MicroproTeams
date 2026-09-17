@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { MessageSquare, Send, Paperclip, Smile, Phone, Video, Trash2, Edit2, Check, CheckCheck, Copy, PhoneCall, ExternalLink, Image, FileText, Download, X, CornerDownLeft } from 'lucide-react';
+import { MessageSquare, Send, Paperclip, Smile, Phone, Video, Trash2, Edit2, Check, CheckCheck, Copy, PhoneCall, ExternalLink, Image, FileText, Download, X, CornerDownLeft, Maximize2 } from 'lucide-react';
 import { apiClient, getMediaUrl } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useCallStore } from '../../stores/callStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { UserAvatar } from '../common/UserAvatar';
 import { DeleteMessageModal } from '../modals/DeleteMessageModal';
 import { formatISTTime } from '../../utils/dateUtils';
 import { AttachmentCard } from './AttachmentCard';
+import { copyToClipboard } from '../../utils/clipboard';
+import { MediaAnnotationModal, MediaAnnotationResult } from './MediaAnnotationModal';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '🚀', '🙏', '👏'];
 const EXTRA_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '🚀', '🙏', '👏', '😁', '🥳', '💡', '✨', '💯', '🙌', '💬', '👌'];
@@ -27,18 +30,26 @@ interface DirectChatAreaProps {
 }
 
 export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }) => {
-  const { user: currentUser } = useAuthStore();
+  const currentUser = useAuthStore((s) => s.user);
   const { initiateCall, callState, canRejoin, setIsCallMinimized, rejoinLastCall } = useCallStore();
 
   const [conversation, setConversation] = useState<any | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [content, setContent] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
 
   // Attachments & Clipboard Paste state
   const [attachedFiles, setAttachedFiles] = useState<ChatAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Media Annotation Modal State
+  const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
+  const [isAnnotationMinimized, setIsAnnotationMinimized] = useState(false);
+  const [annotationMedia, setAnnotationMedia] = useState<File | string | null>(null);
+  const [annotationInitialCaption, setAnnotationInitialCaption] = useState('');
+  const [annotationPreviewUrl, setAnnotationPreviewUrl] = useState<string | null>(null);
 
   // Emoji Pickers state
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
@@ -50,7 +61,9 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   // Delete Modal State
   const [deleteTargetMsgId, setDeleteTargetMsgId] = useState<string | null>(null);
-  const isAdmin = currentUser?.role === 'ADMIN' || (currentUser as any)?.is_admin || (currentUser as any)?.is_superuser;
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'ORG_ADMIN' || (currentUser as any)?.is_admin || (currentUser as any)?.is_superuser;
+  const targetDeleteMsg = messages.find((m) => m.id === deleteTargetMsgId);
+  const canDeleteForEveryone = !!(isAdmin || (targetDeleteMsg && (targetDeleteMsg.sender_id === currentUser?.id || (targetDeleteMsg as any).sender?.id === currentUser?.id)));
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -91,6 +104,25 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
   };
 
   useEffect(() => {
+    if (!annotationMedia) {
+      setAnnotationPreviewUrl(null);
+      return;
+    }
+    if (typeof annotationMedia === 'string') {
+      setAnnotationPreviewUrl(annotationMedia);
+    } else if (annotationMedia instanceof File) {
+      const url = URL.createObjectURL(annotationMedia);
+      setAnnotationPreviewUrl(url);
+      return () => {
+        URL.revokeObjectURL(url);
+      };
+    }
+  }, [annotationMedia]);
+
+  useEffect(() => {
+    setIsAnnotationOpen(false);
+    setIsAnnotationMinimized(false);
+    setAnnotationMedia(null);
     fetchDMMessages();
   }, [conversationId]);
 
@@ -180,7 +212,26 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      addFilesToAttachments(e.target.files);
+      const files = Array.from(e.target.files);
+      addFilesToAttachments(files);
+      if (files.length === 1 && files[0].type.startsWith('image/')) {
+        setAnnotationMedia(files[0]);
+        setAnnotationInitialCaption(content);
+        setIsAnnotationOpen(true);
+        setIsAnnotationMinimized(false);
+      }
+      e.target.value = '';
+    }
+  };
+
+  const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      addFilesToAttachments(files);
+      setAnnotationMedia(files[0]);
+      setAnnotationInitialCaption(content);
+      setIsAnnotationOpen(true);
+      setIsAnnotationMinimized(false);
       e.target.value = '';
     }
   };
@@ -191,20 +242,143 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
     if (!clipboardData) return;
 
     const filesToAttach: File[] = [];
+    let firstImage: File | null = null;
 
     // Check items for image/file data
     if (clipboardData.items) {
       Array.from(clipboardData.items).forEach((item) => {
         if (item.kind === 'file') {
           const file = item.getAsFile();
-          if (file) filesToAttach.push(file);
+          if (file) {
+            if (file.type.startsWith('image/') && !firstImage) {
+              firstImage = file;
+            } else {
+              filesToAttach.push(file);
+            }
+          }
         }
       });
+    }
+
+    if (firstImage) {
+      e.preventDefault();
+      addFilesToAttachments([firstImage, ...filesToAttach]);
+      setAnnotationMedia(firstImage);
+      setAnnotationInitialCaption(content);
+      setIsAnnotationOpen(true);
+      setIsAnnotationMinimized(false);
+      return;
     }
 
     if (filesToAttach.length > 0) {
       e.preventDefault();
       addFilesToAttachments(filesToAttach);
+    }
+  };
+
+  const handleSendAnnotatedMedia = async (result: MediaAnnotationResult) => {
+    if (!conversationId) return;
+    try {
+      setIsSending(true);
+      setIsAnnotationOpen(false);
+      setIsAnnotationMinimized(false);
+      setAnnotationMedia(null);
+      const formData = new FormData();
+      formData.append('file', result.file);
+      const uploadRes = await apiClient.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileData = uploadRes.data.data || uploadRes.data;
+      const fileName = fileData.name || fileData.original_name || fileData.file_name || result.file.name;
+      const fileUrl = fileData.file_url || fileData.url || fileData.download_url || result.previewUrl;
+
+      const attachmentPayload = {
+        file_id: fileData.id,
+        name: fileName,
+        size: fileData.size || result.file.size,
+        type: fileData.mime_type || result.file.type,
+        url: fileUrl
+      };
+
+      let finalContent = result.caption || content.trim();
+      if (result.isViewOnce) {
+        finalContent = `🔒 [View Once Media]\n${finalContent}`.trim();
+      }
+      const attText = `[Attachment: ${fileName}](${getMediaUrl(fileUrl)})`;
+      finalContent = finalContent ? `${finalContent}\n\n${attText}` : attText;
+
+      setContent('');
+      setAttachedFiles([]);
+      setIsEmojiPickerOpen(false);
+
+      const res = await apiClient.post(`/direct-conversations/${conversationId}/messages`, {
+        content: finalContent,
+        attachments: [attachmentPayload]
+      });
+
+      const newMsg = res.data.data || res.data;
+      if (!newMsg.attachments) {
+        newMsg.attachments = [attachmentPayload];
+      }
+
+      setMessages((prev) => {
+        if (prev.some((m) => String(m.id) === String(newMsg.id))) {
+          return prev.map((m) => String(m.id) === String(newMsg.id) ? { ...m, ...newMsg } : m);
+        }
+        return [...prev, newMsg];
+      });
+      scrollToBottom();
+    } catch (err) {
+      console.error('Failed to send annotated media:', err);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Used when annotating an EXISTING message's image — replaces attachment in place
+  const handleUpdateAnnotatedMedia = (existingMsg: any) => async (result: MediaAnnotationResult) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', result.file);
+      const uploadRes = await apiClient.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileData = uploadRes.data.data || uploadRes.data;
+      const fileName = fileData.name || fileData.original_name || fileData.file_name || result.file.name;
+      const fileUrl = fileData.file_url || fileData.url || fileData.download_url || result.previewUrl;
+
+      const attachmentPayload = {
+        file_id: fileData.id,
+        name: fileName,
+        size: fileData.size || result.file.size,
+        type: fileData.mime_type || result.file.type,
+        url: fileUrl
+      };
+
+      // Strip old attachment markdown from the original content
+      const baseContent = (existingMsg.content || '')
+        .replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '')
+        .replace(/📁\s*Attachment:\s*\[[^\]]+\]\([^)]+\)/gi, '')
+        .trim();
+
+      const captionPart = result.caption ? result.caption.trim() : '';
+      const attText = `[Attachment: ${fileName}](${getMediaUrl(fileUrl)})`;
+      const finalContent = captionPart
+        ? `${captionPart}\n\n${attText}`
+        : (baseContent ? `${baseContent}\n\n${attText}` : attText);
+
+      // PATCH the existing message to replace attachment
+      const res = await apiClient.patch(`/messages/${existingMsg.id}`, {
+        content: finalContent,
+        attachments: [attachmentPayload]
+      });
+
+      const updatedMsg = res.data.data || res.data;
+      setMessages((prev) =>
+        prev.map((m) => String(m.id) === String(existingMsg.id) ? { ...m, ...updatedMsg } : m)
+      );
+    } catch (err) {
+      console.error('Failed to update annotated media in DM:', err);
     }
   };
 
@@ -382,11 +556,22 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
     }
   };
 
-  const handleCopyText = async (msg: any) => {
+  const handleCopyText = async (msg: any, cleanText?: string) => {
+    const textToCopy = (cleanText !== undefined ? cleanText : msg.content) || '';
+    if (!textToCopy) return;
     try {
-      await navigator.clipboard.writeText(msg.content);
-      setCopiedMsgId(msg.id);
-      setTimeout(() => setCopiedMsgId(null), 2000);
+      const success = await copyToClipboard(textToCopy);
+      if (success) {
+        setCopiedMsgId(msg.id);
+        useNotificationStore.getState().addToast({
+          title: 'Copied',
+          body: 'Message copied to clipboard',
+          type: 'info'
+        });
+        setTimeout(() => setCopiedMsgId(null), 2000);
+      } else {
+        console.warn('Clipboard copy failed');
+      }
     } catch (err) {
       console.error('Copy text error:', err);
     }
@@ -510,7 +695,7 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
   const chatTitle = conversation?.title || otherMember?.display_name || 'Direct Message';
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0B0D12] relative">
+    <div data-chat-viewport="true" className="flex-1 flex flex-col h-full overflow-hidden bg-[#0B0D12] relative">
       {/* Direct Message Header */}
       <div className="h-12 bg-[#11131A] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-10">
         <div className="flex items-center gap-3">
@@ -664,7 +849,9 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
             }
 
             // Strip [Attachment: ...](...) from display text
+            const isMsgViewOnce = rawContent.includes('[View Once Media]') || !!(msg as any).is_view_once;
             const displayContent = rawContent.replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '').trim();
+            const cleanDisplayContent = displayContent.replace(/🔒\s*\[View Once Media\]/gi, '').trim();
 
             return (
               <div key={msg.id} className={`flex gap-3 ${isMe ? 'flex-row-reverse' : ''} group relative px-2 py-1.5 hover:bg-white/[0.02] rounded-xl transition-colors`}>
@@ -736,12 +923,16 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
                               url={att.url}
                               size={att.size}
                               type={att.type}
+                              messageId={msg.id}
+                              isViewOnce={isMsgViewOnce}
+                              caption={cleanDisplayContent}
+                              onAnnotateSend={handleUpdateAnnotatedMedia(msg)}
                             />
                           ))}
                         </div>
                       )}
 
-                      {displayContent.length > 0 ? (
+                      {cleanDisplayContent.length > 0 ? (
                         <p
                           style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
                           className={`selectable-text p-3 rounded-2xl text-xs leading-relaxed break-words whitespace-pre-wrap shadow-md select-text cursor-text selection:bg-indigo-500 selection:text-white ${
@@ -750,9 +941,9 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
                               : 'bg-[#171923] text-mc-text border border-white/10 rounded-tl-none'
                           }`}
                         >
-                          {displayContent}
+                          {cleanDisplayContent}
                         </p>
-                      ) : effectiveAttachments.length === 0 ? (
+                      ) : (effectiveAttachments.length === 0 && !isMsgViewOnce) ? (
                         <p className="p-2.5 rounded-xl text-xs italic text-mc-muted bg-[#171923]/40 border border-white/5 inline-block">
                           (Empty message)
                         </p>
@@ -787,9 +978,9 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
                       )}
 
                       {/* Message Hover Floating Action Toolbar */}
-                      <div className={`opacity-0 group-hover:opacity-100 group-hover/msg:opacity-100 transition-opacity absolute top-0 ${isMe ? '-left-36' : '-right-36'} bg-[#171923] border border-white/10 rounded-xl shadow-xl flex items-center p-1 gap-0.5 z-30 pointer-events-auto mc-glass`}>
+                      <div className={`opacity-0 group-hover:opacity-100 group-hover/msg:opacity-100 transition-opacity absolute -top-3.5 ${isMe ? 'right-2' : 'left-2'} bg-[#171923] border border-white/10 rounded-xl shadow-xl flex items-center p-1 gap-0.5 z-30 pointer-events-auto mc-glass`}>
                         <button
-                          onClick={() => handleCopyText(msg)}
+                          onClick={() => handleCopyText(msg, displayContent)}
                           className="p-1.5 text-mc-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors flex items-center gap-1 text-[10px]"
                           title="Copy Message"
                         >
@@ -872,14 +1063,32 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
               return (
                 <div key={att.id} className="relative group/att bg-[#11131A] border border-white/10 rounded-lg p-1.5 flex items-center gap-2 max-w-[180px]">
                   {isImg ? (
-                    <img src={att.url} alt={att.name} className="w-8 h-8 rounded object-cover shrink-0" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnnotationMedia(att.file || att.url);
+                        setAnnotationInitialCaption(content);
+                        setIsAnnotationOpen(true);
+                        setIsAnnotationMinimized(false);
+                      }}
+                      className="flex items-center gap-2 text-left hover:text-indigo-300 transition-colors"
+                      title="Click to Annotate / Markup Image"
+                    >
+                      <img src={att.url} alt={att.name} className="w-8 h-8 rounded object-cover shrink-0 ring-1 ring-emerald-500/40" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-medium text-white truncate underline decoration-dotted">{att.name}</p>
+                        <span className="text-[8px] bg-indigo-600/30 text-indigo-300 px-1 py-0.5 rounded border border-indigo-500/30">Edit</span>
+                      </div>
+                    </button>
                   ) : (
-                    <FileText className="w-6 h-6 text-indigo-400 shrink-0" />
+                    <>
+                      <FileText className="w-6 h-6 text-indigo-400 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-medium text-white truncate">{att.name}</p>
+                        <p className="text-[9px] text-mc-muted">{(att.size / 1024).toFixed(0)} KB</p>
+                      </div>
+                    </>
                   )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium text-white truncate">{att.name}</p>
-                    <p className="text-[9px] text-mc-muted">{(att.size / 1024).toFixed(0)} KB</p>
-                  </div>
                   <button
                     type="button"
                     onClick={() => handleRemoveAttachment(att.id)}
@@ -912,12 +1121,74 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
           </div>
         )}
 
+        {/* Minimized Media Annotation Draft Bar (Micropro Teams Styled) */}
+        {isAnnotationOpen && isAnnotationMinimized && (
+          <div className="mb-2.5 p-2 bg-white dark:bg-[#171923] border border-indigo-500/30 dark:border-indigo-500/40 rounded-xl flex items-center justify-between shadow-lg dark:shadow-xl backdrop-blur-md animate-in slide-in-from-bottom-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl overflow-hidden border-2 border-indigo-600/60 dark:border-indigo-500/60 bg-slate-100 dark:bg-black/60 shrink-0 relative flex items-center justify-center shadow-sm">
+                {annotationPreviewUrl ? (
+                  <img src={annotationPreviewUrl} alt="Draft preview" className="w-full h-full object-cover" />
+                ) : (
+                  <Image className="w-5 h-5 text-indigo-500" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Media Markup Draft</span>
+                  <span className="text-[10px] bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.5 rounded font-mono border border-indigo-200 dark:border-indigo-500/30">Editing</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate max-w-xs sm:max-w-md">
+                  {annotationInitialCaption || 'Draft markup ready to resume or send'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsAnnotationMinimized(false)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/25 transition-all active:scale-95 cursor-pointer"
+                title="Resume Editing Markup"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>Resume</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAnnotationOpen(false);
+                  setIsAnnotationMinimized(false);
+                  setAnnotationMedia(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                title="Discard Markup Draft"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSendMessage} className="flex items-end gap-2 bg-[#171923] border border-white/10 rounded-2xl px-3 py-2 focus-within:border-indigo-500/50 transition-all shadow-inner">
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            className="p-1.5 text-mc-muted hover:text-indigo-400 rounded-lg hover:bg-white/5 mb-0.5 transition-colors"
+            title="Attach Photo & Open Markup Editor"
+          >
+            <Image className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
+          </button>
+          <input
+            type="file"
+            ref={imageInputRef}
+            onChange={handleImageFileSelect}
+            className="hidden"
+            accept="image/*"
+          />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className="p-1.5 text-mc-muted hover:text-white rounded-lg hover:bg-white/5 mb-0.5 transition-colors"
-            title="Attach file or image"
+            title="Attach file or document"
           >
             <Paperclip className="w-4 h-4 text-indigo-400" />
           </button>
@@ -953,11 +1224,25 @@ export const DirectChatArea: React.FC<DirectChatAreaProps> = ({ conversationId }
         </p>
       </div>
 
+      <MediaAnnotationModal
+        isOpen={isAnnotationOpen && !isAnnotationMinimized}
+        imageSource={annotationMedia}
+        initialCaption={annotationInitialCaption}
+        onMinimize={() => setIsAnnotationMinimized(true)}
+        onClose={() => {
+          setIsAnnotationOpen(false);
+          setIsAnnotationMinimized(false);
+          setAnnotationMedia(null);
+        }}
+        onSend={handleSendAnnotatedMedia}
+      />
+
       <DeleteMessageModal
         isOpen={!!deleteTargetMsgId}
         onClose={() => setDeleteTargetMsgId(null)}
         onConfirm={confirmDeleteMessage}
         isAdmin={isAdmin}
+        canDeleteForEveryone={canDeleteForEveryone}
         itemType="message"
       />
     </div>

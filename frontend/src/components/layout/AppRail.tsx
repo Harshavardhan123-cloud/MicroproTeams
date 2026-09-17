@@ -63,9 +63,10 @@ export const AppRail: React.FC = () => {
           }`}
           title={isAppRailExpanded ? 'Click to collapse navigation (Ctrl+B)' : 'Click to expand navigation (Ctrl+B)'}
         >
-          <div className="relative w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500/20 via-purple-500/15 to-cyan-500/20 border border-indigo-500/40 p-1.5 shadow-lg shadow-indigo-600/25 flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:border-indigo-400 transition-all duration-300">
-            <MicroproLogo className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)]" />
-            <div className="absolute inset-0 rounded-xl bg-indigo-500/10 blur-sm opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="relative w-9 h-9 rounded-xl overflow-hidden border border-indigo-500/30 shadow-md shadow-indigo-600/20 flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:border-indigo-400 transition-all duration-300 bg-[#f7f7f7]">
+            <MicroproLogo className="w-full h-full object-cover" />
+            <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-black/10 pointer-events-none" />
+            <div className="absolute inset-0 rounded-xl bg-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
           </div>
           {isAppRailExpanded && (
             <div className="flex flex-col min-w-0">

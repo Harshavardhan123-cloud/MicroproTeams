@@ -57,15 +57,24 @@ class FileService:
         user: User,
         visibility: FileVisibility = FileVisibility.ORGANIZATION
     ) -> dict:
-        ext = os.path.splitext(file.filename)[1].lstrip('.').lower() or "bin"
+        raw_filename = file.filename or "file"
+        clean_filename = os.path.basename(raw_filename)
+        ext = os.path.splitext(clean_filename)[1].lstrip('.').lower() or "bin"
         unique_key = f"{uuid.uuid4()}.{ext}"
         file_path = os.path.join(UPLOAD_DIR, unique_key)
 
+        max_allowed_bytes = settings.MAX_FILE_UPLOAD_SIZE_MB * 1024 * 1024
+        if file.size and file.size > max_allowed_bytes:
+            raise ValueError(f"File size exceeds maximum allowed limit of {settings.MAX_FILE_UPLOAD_SIZE_MB}MB")
+
         await file.seek(0)
         file_bytes = await file.read()
+        file_size = len(file_bytes)
+        if file_size > max_allowed_bytes:
+            raise ValueError(f"File size exceeds maximum allowed limit of {settings.MAX_FILE_UPLOAD_SIZE_MB}MB")
+
         import base64
         b64_data = base64.b64encode(file_bytes).decode('utf-8')
-        file_size = len(file_bytes)
         checksum = hashlib.sha256(file_bytes).hexdigest()
 
         try:
@@ -77,8 +86,8 @@ class FileService:
         file_rec = FileRecord(
             organization_id=user.organization_id,
             owner_id=user.id,
-            name=file.filename,
-            original_name=file.filename,
+            name=clean_filename,
+            original_name=clean_filename,
             mime_type=file.content_type or "application/octet-stream",
             extension=ext,
             size=file_size,

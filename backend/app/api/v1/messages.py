@@ -9,6 +9,7 @@ from app.models.models import User, Message, MessageType
 from app.api.deps import get_current_user
 from app.services.message_service import MessageService, MessageAccessError
 from app.services.authorization_service import AuthorizationService
+from app.services.notification_service import create_notification
 from app.core.response import success_response, error_response
 
 router = APIRouter(tags=["Messages"])
@@ -22,6 +23,7 @@ class SendMessageRequest(BaseModel):
 
 class UpdateMessageRequest(BaseModel):
     content: str
+    attachments: Optional[List[dict]] = None
 
 class ToggleReactionRequest(BaseModel):
     emoji: str
@@ -58,7 +60,36 @@ async def post_channel_message(
         client_message_id=req.client_message_id,
         attachments=req.attachments
     )
+
+    # Create notifications for other channel members
+    try:
+        from app.models.models import ChannelMember
+        members_res = await db.execute(
+            select(ChannelMember.user_id).where(
+                ChannelMember.channel_id == channel_id,
+                ChannelMember.user_id != current_user.id
+            )
+        )
+        member_ids = members_res.scalars().all()
+        content_preview = (req.content or "")[:120]
+        is_attachment = bool(req.attachments)
+        notif_title = f"{current_user.display_name or current_user.email} sent a message"
+        notif_type = "FILE" if is_attachment else "MESSAGE"
+        for mid in member_ids:
+            await create_notification(
+                db=db,
+                user_id=str(mid),
+                title=notif_title,
+                body=(content_preview or "Sent an attachment") if content_preview else "Sent an attachment",
+                type=notif_type,
+                conversation_id=channel_id
+            )
+    except Exception as notif_err:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to send channel message notification: {notif_err}")
+
     return success_response(message, status_code=201)
+
 
 @router.get("/messages/{message_id}/replies")
 async def get_message_replies(
@@ -83,7 +114,7 @@ async def update_message(
 ):
     svc = MessageService(db)
     try:
-        updated = await svc.update_message(message_id, current_user, req.content)
+        updated = await svc.update_message(message_id, current_user, req.content, attachments=req.attachments)
     except MessageAccessError as e:
         return error_response("FORBIDDEN", str(e), status_code=403)
     if not updated:
@@ -103,11 +134,15 @@ async def delete_message(
     if not msg:
         return error_response("NOT_FOUND", "Message not found.", status_code=404)
 
-    is_admin = getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_superuser', False) or getattr(current_user, 'role', '') in ('ADMIN', 'ORG_ADMIN', 'ADMINISTRATOR')
+    is_sender = str(msg.sender_id) == str(current_user.id)
+    is_admin = getattr(current_user, 'is_superuser', False) or await AuthorizationService.is_org_admin(current_user, db)
+    can_manage = False
+    if msg.channel_id:
+        can_manage = await AuthorizationService.can_manage_channel(current_user, str(msg.channel_id), db)
 
     if mode == "everyone":
-        if not is_admin:
-            return error_response("FORBIDDEN", "Only administrators can delete messages for everyone.", status_code=403)
+        if not (is_sender or is_admin or can_manage):
+            return error_response("FORBIDDEN", "You can only delete your own messages for everyone.", status_code=403)
         svc = MessageService(db)
         try:
             deleted = await svc.delete_message(message_id, current_user)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,30 +9,43 @@ import {
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
+  Modal,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Colors } from '../theme/colors';
 import { Avatar } from '../components/common/Avatar';
-import { chatStore, Conversation, ChatMessage } from '../stores/chatStore';
-import { callStore, CallParticipant } from '../stores/callStore';
-import { authStore } from '../stores/authStore';
+import { chatStore, DirectConversationItem, ChatMessage } from '../stores/chatStore';
+import { contactsStore, UserContact } from '../stores/contactsStore';
+import { callStore } from '../stores/callStore';
+import { MessageItem } from '../components/chat/MessageItem';
+import { MessageComposer } from '../components/chat/MessageComposer';
+import type { UploadedFile } from '../services/fileUploadService';
 
 export const ChatsScreen: React.FC = () => {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConv, setActiveConv] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputText, setInputText] = useState('');
+  const [chatState, setChatState] = useState(chatStore.getState());
+  const [contactsState, setContactsState] = useState(contactsStore.getState());
   const [refreshing, setRefreshing] = useState(false);
+  const [newChatModalVisible, setNewChatModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
-    const unsub = chatStore.subscribe(() => {
-      const state = chatStore.getState();
-      setConversations(state.conversations);
-      setActiveConv(state.activeConversation);
-      setMessages(state.messages);
+    const unsubChat = chatStore.subscribe(() => {
+      setChatState(chatStore.getState());
+    });
+    const unsubContacts = contactsStore.subscribe(() => {
+      setContactsState(contactsStore.getState());
     });
 
     chatStore.fetchConversations();
-    return () => unsub();
+    contactsStore.fetchUsers();
+
+    return () => {
+      unsubChat();
+      unsubContacts();
+    };
   }, []);
 
   const handleRefresh = async () => {
@@ -41,25 +54,55 @@ export const ChatsScreen: React.FC = () => {
     setRefreshing(false);
   };
 
-  const handleSendMessage = () => {
-    if (!inputText.trim()) return;
-    chatStore.sendMessage(inputText);
-    setInputText('');
+  const handleSendMessage = async (text: string, attachments: UploadedFile[]) => {
+    await chatStore.sendDirectMessage(text, attachments);
   };
 
-  // Start 1-to-1 or group call from conversation
+  const handleSaveEdit = async (text: string) => {
+    if (!editingMessage) return;
+    await chatStore.editMessage(editingMessage.id, text, 'dm');
+    setEditingMessage(null);
+  };
+
+  const handleDeleteMessage = async (message: ChatMessage, mode: 'me' | 'everyone') => {
+    const result = await chatStore.deleteMessage(message.id, mode, 'dm');
+    if (!result.success) {
+      Alert.alert('Delete Failed', result.error || 'Could not delete this message.');
+    }
+  };
+
+  const handleToggleReaction = async (message: ChatMessage, emoji: string) => {
+    await chatStore.toggleReaction(message.id, emoji, 'dm');
+  };
+
   const handleStartCall = (type: 'audio' | 'video') => {
-    if (!activeConv) return;
-    const recipient: CallParticipant = {
-      id: activeConv.recipientId || activeConv.id,
-      name: activeConv.name.replace(/^#\s*/, ''),
-      avatar: activeConv.avatar,
-    };
-    callStore.initiateCall(recipient, type, activeConv.id);
+    const conv = chatState.activeConversation;
+    if (!conv || !conv.recipient) return;
+    callStore.initiateCall(
+      {
+        id: conv.recipient.id,
+        name: conv.recipient.display_name,
+        avatar: conv.recipient.avatar_url,
+      },
+      type,
+      conv.id
+    );
   };
 
-  // If inside an active conversation
-  if (activeConv) {
+  const handleStartNewChatWithUser = async (user: UserContact) => {
+    setNewChatModalVisible(false);
+    await chatStore.startOrOpenDirectChat(user.id);
+  };
+
+  // -------------------------------------------------------------
+  // Inside Direct Chat Room View
+  // -------------------------------------------------------------
+  const { activeConversation, messages, isLoading } = chatState;
+
+  if (activeConversation) {
+    const recipient = activeConversation.recipient;
+    const isOnline = recipient?.presence === 'available' || recipient?.presence === 'online';
+
     return (
       <KeyboardAvoidingView
         style={styles.container}
@@ -68,158 +111,273 @@ export const ChatsScreen: React.FC = () => {
         {/* Chat Room Header */}
         <View style={styles.roomHeader}>
           <TouchableOpacity
-            style={styles.backButton}
+            style={styles.backBtn}
             onPress={() => chatStore.closeActiveConversation()}
+            activeOpacity={0.7}
           >
-            <Text style={styles.backText}>‹</Text>
+            <Text style={styles.backBtnText}>‹</Text>
           </TouchableOpacity>
 
-          <Avatar
-            name={activeConv.name.replace(/^#\s*/, '')}
-            avatarUrl={activeConv.avatar}
-            size={36}
-          />
+          <View style={styles.avatarWrap}>
+            <Avatar
+              name={recipient?.display_name || activeConversation.title || 'Colleague'}
+              avatarUrl={recipient?.avatar_url}
+              size={36}
+            />
+            <View
+              style={[
+                styles.roomPresenceDot,
+                { backgroundColor: isOnline ? Colors.emerald : Colors.textMuted },
+              ]}
+            />
+          </View>
 
           <View style={styles.roomTitleBlock}>
-            <Text style={styles.roomName}>{activeConv.name}</Text>
+            <Text style={styles.roomTitle} numberOfLines={1}>
+              {recipient?.display_name || activeConversation.title || 'Direct Message'}
+            </Text>
             <Text style={styles.roomStatus}>
-              {activeConv.type === 'channel' ? 'Channel Discussion' : 'Direct Message'}
+              {isOnline ? 'Online now' : 'Offline'}
             </Text>
           </View>
 
-          {/* Quick Call Initiation Action Buttons */}
-          <View style={styles.callButtonsRow}>
+          {/* Action Call Buttons */}
+          <View style={styles.callBtnsRow}>
             <TouchableOpacity
               style={styles.iconCallBtn}
               onPress={() => handleStartCall('audio')}
               activeOpacity={0.7}
             >
-              <Text style={styles.callIconEmoji}>📞</Text>
+              <Text style={styles.callBtnEmoji}>📞</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.iconCallBtn, styles.iconCallBtnVideo]}
+              style={styles.iconCallBtn}
               onPress={() => handleStartCall('video')}
               activeOpacity={0.7}
             >
-              <Text style={styles.callIconEmoji}>📹</Text>
+              <Text style={styles.callBtnEmoji}>📹</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Messages List */}
-        <FlatList
-          data={messages}
-          keyExtractor={(item) => item.id}
-          style={styles.messagesList}
-          contentContainerStyle={styles.messagesContent}
-          renderItem={({ item }) => (
-            <View
-              style={[
-                styles.messageRow,
-                item.is_outgoing ? styles.messageOutgoing : styles.messageIncoming,
-              ]}
-            >
-              {!item.is_outgoing ? (
-                <Avatar
-                  name={item.sender_name}
-                  avatarUrl={item.sender_avatar}
-                  size={28}
-                />
-              ) : null}
-
-              <View
-                style={[
-                  styles.bubble,
-                  item.is_outgoing ? styles.bubbleOutgoing : styles.bubbleIncoming,
-                ]}
-              >
-                {!item.is_outgoing ? (
-                  <Text style={styles.senderLabel}>{item.sender_name}</Text>
-                ) : null}
-                <Text
-                  style={[
-                    styles.messageText,
-                    item.is_outgoing ? styles.textWhite : styles.textLight,
-                  ]}
-                >
-                  {item.content}
-                </Text>
-                <Text style={styles.messageTime}>
-                  {new Date(item.created_at).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+        {/* Message Thread */}
+        {isLoading && messages.length === 0 ? (
+          <View style={styles.centerLoading}>
+            <ActivityIndicator color={Colors.primary} size="large" />
+            <Text style={styles.loadingText}>Loading conversation history...</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.messagesList}
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyChatIcon}>
+                  <Text style={styles.emptyChatIconText}>💬</Text>
+                </View>
+                <Text style={styles.emptyTitle}>Direct Discussion</Text>
+                <Text style={styles.emptySubtitle}>
+                  Send your first message to start talking with {recipient?.display_name || 'colleague'}.
                 </Text>
               </View>
-            </View>
-          )}
-        />
-
-        {/* Input Bar */}
-        <View style={styles.inputBar}>
-          <TextInput
-            style={styles.chatInput}
-            placeholder={`Message ${activeConv.name}...`}
-            placeholderTextColor={Colors.textMuted}
-            value={inputText}
-            onChangeText={setInputText}
-            multiline
+            }
+            renderItem={({ item }) => (
+              <MessageItem
+                message={item}
+                showSenderName={false}
+                onEdit={(m) => setEditingMessage(m)}
+                onDelete={handleDeleteMessage}
+                onToggleReaction={handleToggleReaction}
+              />
+            )}
           />
-          <TouchableOpacity
-            style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-            onPress={handleSendMessage}
-            disabled={!inputText.trim()}
-          >
-            <Text style={styles.sendIcon}>➤</Text>
-          </TouchableOpacity>
-        </View>
+        )}
+
+        {/* Bottom Input Box */}
+        <MessageComposer
+          onSend={handleSendMessage}
+          editingMessage={editingMessage}
+          onSaveEdit={handleSaveEdit}
+          onCancelEdit={() => setEditingMessage(null)}
+          placeholder={`Message ${recipient?.display_name || 'colleague'}...`}
+        />
       </KeyboardAvoidingView>
     );
   }
 
-  // Conversation List (Channels & Direct Messages)
+  // -------------------------------------------------------------
+  // Conversations Inbox List View
+  // -------------------------------------------------------------
+  const { conversations } = chatState;
+  const filteredConvs = conversations.filter((c) => {
+    if (!searchQuery.trim()) return true;
+    const name = c.recipient?.display_name || c.title || '';
+    return name.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
   return (
     <View style={styles.container}>
-      <FlatList
-        data={conversations}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={Colors.primary}
+      {/* Search & New Chat Action Header */}
+      <View style={styles.inboxHeader}>
+        <View style={styles.searchBar}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search conversations..."
+            placeholderTextColor={Colors.textMuted}
+            autoCapitalize="none"
           />
-        }
-        contentContainerStyle={styles.convListContent}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.convItem}
-            onPress={() => chatStore.selectConversation(item)}
-            activeOpacity={0.7}
-          >
-            <Avatar
-              name={item.name.replace(/^#\s*/, '')}
-              avatarUrl={item.avatar}
-              size={48}
-              showStatus={item.type === 'direct'}
+        </View>
+
+        <TouchableOpacity
+          style={styles.newChatBtn}
+          onPress={() => setNewChatModalVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.newChatBtnText}>+ New</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Conversations List */}
+      {isLoading && conversations.length === 0 ? (
+        <View style={styles.centerLoading}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+          <Text style={styles.loadingText}>Fetching messages...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredConvs}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.convsList}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={Colors.primary}
             />
-
-            <View style={styles.convDetails}>
-              <View style={styles.convTopRow}>
-                <Text style={styles.convName}>{item.name}</Text>
-                {item.lastMessageTime ? (
-                  <Text style={styles.convTime}>{item.lastMessageTime}</Text>
-                ) : null}
-              </View>
-
-              <Text style={styles.convSnippet} numberOfLines={1}>
-                {item.lastMessage || 'No recent messages'}
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyIcon}>💬</Text>
+              <Text style={styles.emptyTitle}>No Direct Messages</Text>
+              <Text style={styles.emptySubtitle}>
+                Tap "+ New" above to start a direct message with any colleague in your workspace.
               </Text>
+              <TouchableOpacity
+                style={styles.emptyActionBtn}
+                onPress={() => setNewChatModalVisible(true)}
+              >
+                <Text style={styles.emptyActionBtnText}>Start Conversation</Text>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
-        )}
-      />
+          }
+          renderItem={({ item }) => {
+            const recipient = item.recipient;
+            const displayName = recipient?.display_name || item.title || 'Colleague';
+            const isOnline = recipient?.presence === 'available' || recipient?.presence === 'online';
+
+            return (
+              <TouchableOpacity
+                style={styles.convItem}
+                onPress={() => chatStore.selectConversation(item)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.avatarWrap}>
+                  <Avatar
+                    name={displayName}
+                    avatarUrl={recipient?.avatar_url}
+                    size={44}
+                  />
+                  <View
+                    style={[
+                      styles.presenceDot,
+                      { backgroundColor: isOnline ? Colors.emerald : Colors.textMuted },
+                    ]}
+                  />
+                </View>
+
+                <View style={styles.convDetails}>
+                  <View style={styles.convTitleRow}>
+                    <Text style={styles.convName} numberOfLines={1}>
+                      {displayName}
+                    </Text>
+                    <Text style={styles.convTime}>{item.lastMessageTime}</Text>
+                  </View>
+
+                  <View style={styles.convBottomRow}>
+                    <Text style={styles.convLastMsg} numberOfLines={1}>
+                      {item.lastMessage || 'No messages yet'}
+                    </Text>
+                    {item.unreadCount && item.unreadCount > 0 ? (
+                      <View style={styles.unreadBadge}>
+                        <Text style={styles.unreadText}>{item.unreadCount}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      )}
+
+      {/* New Chat User Picker Modal */}
+      <Modal
+        visible={newChatModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setNewChatModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>New Direct Message</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setNewChatModalVisible(false)}
+              >
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSub}>
+              Select a colleague from your workspace directory to start a chat:
+            </Text>
+
+            <FlatList
+              data={contactsState.users}
+              keyExtractor={(u) => u.id}
+              style={styles.usersPickerList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.userPickerItem}
+                  onPress={() => handleStartNewChatWithUser(item)}
+                  activeOpacity={0.7}
+                >
+                  <Avatar
+                    name={item.display_name || item.username}
+                    avatarUrl={item.avatar_url}
+                    size={38}
+                  />
+                  <View style={styles.userPickerInfo}>
+                    <Text style={styles.userPickerName}>
+                      {item.display_name || item.username}
+                    </Text>
+                    <Text style={styles.userPickerEmail}>{item.email}</Text>
+                  </View>
+                  <Text style={styles.startArrow}>›</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -229,8 +387,50 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  convListContent: {
+  inboxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: 16,
+    paddingBottom: 12,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.surfaceBorder,
+    gap: 10,
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  searchIcon: {
+    fontSize: 14,
+  },
+  searchInput: {
+    flex: 1,
+    color: Colors.textPrimary,
+    fontSize: 13.5,
+    padding: 0,
+  },
+  newChatBtn: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 12,
+  },
+  newChatBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  convsList: {
+    padding: 12,
     gap: 8,
   },
   convItem: {
@@ -241,12 +441,25 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
+    gap: 12,
+  },
+  avatarWrap: {
+    position: 'relative',
+  },
+  presenceDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: Colors.surface,
   },
   convDetails: {
     flex: 1,
-    marginLeft: 14,
   },
-  convTopRow: {
+  convTitleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -255,146 +468,189 @@ const styles = StyleSheet.create({
   convName: {
     color: Colors.textPrimary,
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '600',
+    flex: 1,
   },
   convTime: {
     color: Colors.textMuted,
     fontSize: 11,
+    marginLeft: 8,
   },
-  convSnippet: {
+  convBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  convLastMsg: {
     color: Colors.textSecondary,
-    fontSize: 13,
+    fontSize: 12.5,
+    flex: 1,
   },
+  unreadBadge: {
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginLeft: 6,
+  },
+  unreadText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+
+  // Room view
   roomHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.surfaceBorder,
     gap: 10,
   },
-  backButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  backBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  backText: {
+  backBtnText: {
     color: Colors.textPrimary,
     fontSize: 28,
     fontWeight: '300',
+    marginTop: -4,
+  },
+  roomPresenceDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: Colors.surface,
   },
   roomTitleBlock: {
     flex: 1,
   },
-  roomName: {
+  roomTitle: {
     color: Colors.textPrimary,
     fontSize: 15,
     fontWeight: '700',
   },
   roomStatus: {
-    color: Colors.textMuted,
+    color: Colors.textSecondary,
     fontSize: 11,
+    marginTop: 1,
   },
-  callButtonsRow: {
+  callBtnsRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   iconCallBtn: {
     width: 36,
     height: 36,
-    borderRadius: 18,
+    borderRadius: 10,
     backgroundColor: Colors.surfaceLight,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconCallBtnVideo: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-    borderColor: 'rgba(99, 102, 241, 0.3)',
-  },
-  callIconEmoji: {
-    fontSize: 16,
+  callBtnEmoji: {
+    fontSize: 15,
   },
   messagesList: {
-    flex: 1,
-  },
-  messagesContent: {
     padding: 16,
     gap: 12,
   },
-  messageRow: {
+  msgRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
   },
-  messageIncoming: {
+  msgRowLeft: {
     justifyContent: 'flex-start',
   },
-  messageOutgoing: {
+  msgRowRight: {
     justifyContent: 'flex-end',
   },
-  bubble: {
+  bubbleWrapper: {
     maxWidth: '75%',
+  },
+  bubbleWrapperRight: {
+    alignItems: 'flex-end',
+  },
+  bubble: {
+    borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 18,
   },
-  bubbleIncoming: {
-    backgroundColor: Colors.surfaceLight,
+  bubbleMe: {
+    backgroundColor: Colors.primary,
+    borderBottomRightRadius: 4,
+  },
+  bubbleThem: {
+    backgroundColor: Colors.surfaceElevated,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
     borderBottomLeftRadius: 4,
   },
-  bubbleOutgoing: {
-    backgroundColor: Colors.primary,
-    borderBottomRightRadius: 4,
-  },
-  senderLabel: {
-    color: Colors.teamsPurpleLight,
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  messageText: {
+  msgText: {
     fontSize: 14,
     lineHeight: 20,
   },
-  textWhite: {
+  msgTextMe: {
     color: '#FFFFFF',
   },
-  textLight: {
+  msgTextThem: {
     color: Colors.textPrimary,
   },
-  messageTime: {
-    color: 'rgba(255, 255, 255, 0.6)',
-    fontSize: 10,
-    marginTop: 4,
-    alignSelf: 'flex-end',
-  },
-  inputBar: {
+  bubbleFooter: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-end',
+    marginTop: 4,
+  },
+  timestamp: {
+    fontSize: 9.5,
+  },
+  timeMe: {
+    color: 'rgba(255, 255, 255, 0.7)',
+  },
+  timeThem: {
+    color: Colors.textMuted,
+  },
+  readReceipt: {
+    color: Colors.cyan,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     backgroundColor: Colors.surface,
-    padding: 10,
     borderTopWidth: 1,
     borderTopColor: Colors.surfaceBorder,
-    gap: 10,
+    gap: 8,
   },
-  chatInput: {
+  textInput: {
     flex: 1,
     backgroundColor: Colors.surfaceLight,
-    borderRadius: 20,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
+    borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     color: Colors.textPrimary,
     fontSize: 14,
     maxHeight: 100,
   },
-  sendButton: {
+  sendBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -402,11 +658,144 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendButtonDisabled: {
+  sendBtnDisabled: {
     opacity: 0.4,
   },
-  sendIcon: {
+  sendBtnText: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '800',
+    marginLeft: 2,
+  },
+  centerLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  loadingText: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    marginTop: 12,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    marginTop: 40,
+  },
+  emptyIcon: {
+    fontSize: 36,
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    color: Colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  emptySubtitle: {
+    color: Colors.textSecondary,
+    fontSize: 12.5,
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 280,
+  },
+  emptyActionBtn: {
+    marginTop: 16,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  emptyActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  emptyChatIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  emptyChatIconText: {
+    fontSize: 24,
+  },
+
+  // Modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 7, 11, 0.85)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  modalTitle: {
+    color: Colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.surfaceLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalSub: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    marginBottom: 16,
+  },
+  usersPickerList: {
+    marginBottom: 16,
+  },
+  userPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.surfaceBorder,
+    gap: 12,
+  },
+  userPickerInfo: {
+    flex: 1,
+  },
+  userPickerName: {
+    color: Colors.textPrimary,
+    fontSize: 14.5,
+    fontWeight: '600',
+  },
+  userPickerEmail: {
+    color: Colors.textSecondary,
+    fontSize: 11.5,
+    marginTop: 2,
+  },
+  startArrow: {
+    color: Colors.textMuted,
+    fontSize: 22,
   },
 });

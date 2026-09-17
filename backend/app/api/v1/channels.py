@@ -1,5 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -26,6 +27,8 @@ class ChannelUpdateRequest(BaseModel):
 
 class AddChannelMemberRequest(BaseModel):
     user_id: str
+    history_sharing_option: Optional[str] = "ALL"  # "ALL", "NONE", or "DAYS"
+    history_days: Optional[int] = None
 
 @router.post("/teams/{team_id}/channels")
 async def create_channel(
@@ -229,6 +232,7 @@ async def get_private_channel_members(
             "user_id": str(m.user_id),
             "role": m.role,
             "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+            "visible_history_from": m.visible_history_from.isoformat() if getattr(m, "visible_history_from", None) else None,
             "user": {
                 "id": str(m.user.id),
                 "display_name": m.user.display_name,
@@ -268,7 +272,18 @@ async def add_private_channel_member(
     if existing.scalars().first():
         return error_response("MEMBER_EXISTS", "User is already a member of this private channel.", status_code=400)
 
-    cm = ChannelMember(channel_id=channel_id, user_id=req.user_id, role=ChannelMemberRole.MEMBER)
+    visible_history_from = None
+    if req.history_sharing_option == "NONE":
+        visible_history_from = datetime.utcnow()
+    elif req.history_sharing_option == "DAYS" and req.history_days and req.history_days > 0:
+        visible_history_from = datetime.utcnow() - timedelta(days=req.history_days)
+
+    cm = ChannelMember(
+        channel_id=channel_id,
+        user_id=req.user_id,
+        role=ChannelMemberRole.MEMBER,
+        visible_history_from=visible_history_from
+    )
     db.add(cm)
     await db.commit()
     await db.refresh(cm)
@@ -276,14 +291,15 @@ async def add_private_channel_member(
     await AuditService.log_action(
         db, str(current_user.organization_id), str(current_user.id),
         "CHANNEL_MEMBER_ADDED", "channel_member", str(cm.id),
-        details=f"Added user '{req.user_id}' to private channel '{channel_id}'"
+        details=f"Added user '{req.user_id}' to private channel '{channel_id}' (history: {req.history_sharing_option})"
     )
 
     return success_response({
         "id": str(cm.id),
         "channel_id": str(cm.channel_id),
         "user_id": str(cm.user_id),
-        "role": cm.role
+        "role": cm.role,
+        "visible_history_from": cm.visible_history_from.isoformat() if cm.visible_history_from else None
     }, status_code=201)
 
 @router.delete("/channels/{channel_id}/members/{user_id}")

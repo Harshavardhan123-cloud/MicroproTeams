@@ -5,7 +5,7 @@ import { Server, ArrowRight, CheckCircle, AlertCircle, Loader2, Globe } from 'lu
 export const ServerSetupPage: React.FC = () => {
   const navigate = useNavigate();
   const [serverUrl, setServerUrl] = useState(
-    localStorage.getItem('electron_server_url') || 'http://192.168.1.1:8000'
+    localStorage.getItem('electron_server_url') || 'http://localhost:8000'
   );
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'idle' | 'success' | 'fail'>('idle');
@@ -70,25 +70,25 @@ export const ServerSetupPage: React.FC = () => {
               setServerUrl(e.target.value);
               setTestResult('idle');
             }}
-            placeholder="http://192.168.1.147:8000"
+            placeholder="http://localhost:8000"
             className="w-full bg-[#0D0F16] border border-white/10 focus:border-indigo-500 text-white text-sm rounded-xl px-4 py-3 outline-none transition-all font-mono"
           />
 
           <p className="text-[11px] text-slate-500 mt-2">
-            This is the address of the backend. Default: <span className="text-indigo-400 font-mono">http://192.168.1.147:8000</span> or Cloudflare tunnel.
+            This is the address of the backend. Default: <span className="text-indigo-400 font-mono">http://localhost:8000</span> or Cloudflare tunnel.
           </p>
 
           {/* Quick presets */}
           <div className="flex items-center gap-2 mt-4 flex-wrap">
             <span className="text-[11px] text-slate-500">Quick:</span>
             <button
-              onClick={() => { setServerUrl('http://192.168.1.147:8000'); setTestResult('idle'); }}
+              onClick={() => { setServerUrl('http://localhost:8000'); setTestResult('idle'); }}
               className="text-[11px] px-2.5 py-1 rounded-lg bg-white/5 hover:bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 font-mono transition-all font-semibold"
             >
-              LAN (192.168.1.147:8000)
+              Local (localhost:8000)
             </button>
             <button
-              onClick={() => { setServerUrl('https://outdoors-introduction-commodities-gender.trycloudflare.com'); setTestResult('idle'); }}
+              onClick={() => { setServerUrl('https://violin-providers-entries-content.trycloudflare.com'); setTestResult('idle'); }}
               className="text-[11px] px-2.5 py-1 rounded-lg bg-white/5 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-mono transition-all font-semibold"
             >
               🔒 Cloudflare Tunnel

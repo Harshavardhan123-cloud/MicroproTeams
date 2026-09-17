@@ -6,7 +6,11 @@ import { useUIStore } from '../../stores/uiStore';
 
 function formatRelativeTime(isoString?: string): string {
   if (!isoString) return 'Just now';
-  const diffMs = Date.now() - new Date(isoString).getTime();
+  const cleanStr = isoString.endsWith('Z') || isoString.includes('+') ? isoString : `${isoString}Z`;
+  const timeMs = new Date(cleanStr).getTime();
+  if (isNaN(timeMs)) return 'Just now';
+  const diffMs = Date.now() - timeMs;
+  if (diffMs < 0) return 'Just now';
   const diffMins = Math.floor(diffMs / 60000);
   if (diffMins < 1) return 'Just now';
   if (diffMins < 60) return `${diffMins}m ago`;
@@ -17,8 +21,8 @@ function formatRelativeTime(isoString?: string): string {
 }
 
 export const ActivityFeedWorkspace: React.FC = () => {
-  const { notifications, setNotifications, markAllNotifsRead, clearAllNotifications, removeNotification } = useNotificationStore();
-  const { setActiveTab } = useUIStore();
+  const { notifications, setNotifications, markAllNotifsRead, markNotifRead, clearAllNotifications, removeNotification } = useNotificationStore();
+  const { setActiveTab, setSelectedConversationId } = useUIStore();
 
   const [filter, setFilter] = useState<'all' | 'unread' | 'chat' | 'call' | 'reaction'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -28,48 +32,20 @@ export const ActivityFeedWorkspace: React.FC = () => {
     try {
       setIsLoading(true);
       const res = await notificationService.getNotifications();
-      if (res.notifications && res.notifications.length > 0) {
-        const formatted: ActivityNotificationItem[] = res.notifications.map((n) => ({
-          id: n.id,
-          title: n.title,
-          body: n.body,
-          time: formatRelativeTime(n.created_at),
-          unread: !n.is_read,
-          type: n.type || 'system',
-          created_at: n.created_at
-        }));
-        setNotifications(formatted);
-      } else if (notifications.length === 0) {
-        setNotifications([
-          {
-            id: 'demo-1',
-            title: 'Ethan Hunt sent you a direct message',
-            body: "Hey, let's review the security policy updates before the afternoon release.",
-            time: '2m ago',
-            unread: true,
-            type: 'direct_message',
-            created_at: new Date(Date.now() - 120000).toISOString()
-          },
-          {
-            id: 'demo-2',
-            title: 'Upcoming Standup Meeting in Engineering channel',
-            body: 'Daily Engineering & Architecture Standup begins in 15 minutes.',
-            time: '15m ago',
-            unread: true,
-            type: 'meeting',
-            created_at: new Date(Date.now() - 900000).toISOString()
-          },
-          {
-            id: 'demo-3',
-            title: 'Admin Alex Vance updated workspace policies',
-            body: 'Data governance & retention policies updated for Acme Corp organization.',
-            time: '1h ago',
-            unread: true,
-            type: 'system',
-            created_at: new Date(Date.now() - 3600000).toISOString()
-          }
-        ]);
-      }
+      const list = res.notifications || [];
+      const formatted: ActivityNotificationItem[] = list.map((n: any) => ({
+        id: n.id || n.notificationId,
+        title: n.title,
+        body: n.body,
+        time: formatRelativeTime(n.created_at),
+        unread: n.status ? n.status === 'UNREAD' : (n.is_read !== undefined ? !n.is_read : true),
+        type: n.type || 'system',
+        created_at: n.created_at,
+        conversationId: n.conversation_id || n.conversationId,
+        callId: n.call_id || n.callId,
+        meetingId: n.meeting_id || n.meetingId
+      }));
+      setNotifications(formatted);
     } catch (err) {
       console.error('Fetch activity feed error:', err);
     } finally {
@@ -87,6 +63,24 @@ export const ActivityFeedWorkspace: React.FC = () => {
       await notificationService.markAsRead(true);
     } catch (err) {
       console.error('Error marking all read:', err);
+    }
+  };
+
+  const handleClearAll = async () => {
+    clearAllNotifications();
+    try {
+      await notificationService.clearAllNotifications();
+    } catch (err) {
+      console.error('Error clearing all notifications:', err);
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    removeNotification(id);
+    try {
+      await notificationService.deleteNotification(id);
+    } catch (err) {
+      console.error('Error deleting notification:', err);
     }
   };
 
@@ -152,7 +146,7 @@ export const ActivityFeedWorkspace: React.FC = () => {
             <span>Mark All Read</span>
           </button>
           <button
-            onClick={clearAllNotifications}
+            onClick={handleClearAll}
             className="px-3.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold rounded-xl border border-rose-500/20 flex items-center gap-2 transition-all active:scale-95"
             title="Clear all notifications"
           >
@@ -252,7 +246,12 @@ export const ActivityFeedWorkspace: React.FC = () => {
                 <div className="flex items-center gap-2 shrink-0">
                   {item.type === 'direct_message' || item.type === 'chat' ? (
                     <button
-                      onClick={() => setActiveTab('chat')}
+                      onClick={() => {
+                        setActiveTab('chat');
+                        if (item.conversationId) {
+                          setSelectedConversationId(item.conversationId);
+                        }
+                      }}
                       className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold rounded-xl shadow-lg shadow-indigo-600/20 flex items-center gap-1.5 transition-all active:scale-95"
                     >
                       <span>Open Chat</span>
@@ -269,7 +268,7 @@ export const ActivityFeedWorkspace: React.FC = () => {
                   ) : null}
 
                   <button
-                    onClick={() => removeNotification(item.id)}
+                    onClick={() => handleRemove(item.id)}
                     className="p-1.5 text-mc-muted hover:text-rose-500 hover:bg-rose-500/10 rounded-xl border border-transparent hover:border-rose-500/20 transition-all"
                     title="Clear notification"
                   >

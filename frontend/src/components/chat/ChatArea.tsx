@@ -89,7 +89,7 @@ export const ChatArea: React.FC = () => {
   return (
     <div className="flex-1 flex h-full overflow-hidden bg-[#0B0D12]">
       {/* Main Channel Area */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div data-chat-viewport="true" className="flex-1 flex flex-col h-full overflow-hidden relative">
         {/* Channel Header Bar */}
         <div className="h-12 bg-[#11131A] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-3">

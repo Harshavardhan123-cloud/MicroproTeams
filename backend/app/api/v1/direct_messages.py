@@ -11,6 +11,7 @@ from app.models.models import User, DirectConversation, DirectConversationMember
 from app.repositories.message_repository import MessageRepository
 from app.api.deps import get_current_user
 from app.services.message_service import MessageService
+from app.services.authorization_service import AuthorizationService
 from app.services.notification_service import create_notification
 from app.core.response import success_response, error_response
 from app.core.websocket import ws_manager
@@ -242,13 +243,31 @@ async def send_direct_message(
         })
         if target_user_id != str(current_user.id):
             try:
+                content_str = (req.content or "").strip()
+                if "📞 Started a video call" in content_str or "video call with" in content_str.lower():
+                    notif_title = f"{current_user.display_name} started a video call"
+                    notif_type = "CALL"
+                    notif_priority = "HIGH"
+                elif "📞 Started a" in content_str or "audio call" in content_str.lower() or "call with" in content_str.lower():
+                    notif_title = f"{current_user.display_name} started an audio call"
+                    notif_type = "CALL"
+                    notif_priority = "HIGH"
+                elif req.attachments or "Attachment:" in content_str:
+                    notif_title = f"{current_user.display_name} sent an attachment"
+                    notif_type = "FILE"
+                    notif_priority = "NORMAL"
+                else:
+                    notif_title = f"{current_user.display_name} sent you a direct message"
+                    notif_type = "MESSAGE"
+                    notif_priority = "NORMAL"
+
                 await create_notification(
                     db=db,
                     user_id=target_user_id,
-                    title=f"{current_user.display_name} sent you a direct message",
-                    body=(req.content or "Sent an attachment")[:100],
-                    type="MESSAGE",
-                    priority="NORMAL",
+                    title=notif_title,
+                    body=(content_str or "Sent an attachment")[:120],
+                    type=notif_type,
+                    priority=notif_priority,
                     conversation_id=conversation_id
                 )
             except Exception as notif_err:
@@ -266,7 +285,7 @@ async def update_direct_message(
 ):
     res = await db.execute(select(Message).where(Message.id == message_id, Message.conversation_id == conversation_id))
     msg = res.scalars().first()
-    is_admin = getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_superuser', False) or getattr(current_user, 'role', '') in ('ADMIN', 'ORG_ADMIN', 'ADMINISTRATOR')
+    is_admin = getattr(current_user, 'is_superuser', False) or await AuthorizationService.is_org_admin(current_user, db)
     if not msg or (str(msg.sender_id) != str(current_user.id) and not is_admin):
         return error_response("UNAUTHORIZED", "Message not found or permission denied.", status_code=403)
 
@@ -301,14 +320,15 @@ async def delete_direct_message(
     if not msg:
         return error_response("NOT_FOUND", "Message not found.", status_code=404)
 
-    is_admin = getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_superuser', False) or getattr(current_user, 'role', '') in ('ADMIN', 'ORG_ADMIN', 'ADMINISTRATOR')
+    is_sender = str(msg.sender_id) == str(current_user.id)
+    is_admin = getattr(current_user, 'is_superuser', False) or await AuthorizationService.is_org_admin(current_user, db)
 
     if mode == "everyone":
-        if not is_admin:
-            return error_response("FORBIDDEN", "Only administrators can delete messages for everyone.", status_code=403)
+        if not (is_sender or is_admin):
+            return error_response("FORBIDDEN", "You can only delete your own messages for everyone.", status_code=403)
         
-        await db.delete(msg)
-        await db.commit()
+        repo = MessageRepository(db)
+        await repo.delete(msg)
 
         mem_res = await db.execute(select(DirectConversationMember.user_id).where(DirectConversationMember.conversation_id == conversation_id))
         member_user_ids = [str(uid) for uid in mem_res.scalars().all()]
@@ -339,7 +359,7 @@ async def clear_direct_conversation(
     db: AsyncSession = Depends(get_db)
 ):
     await _ensure_conversation_member(conversation_id, current_user, db)
-    is_admin = getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_superuser', False) or getattr(current_user, 'role', '') in ('ADMIN', 'ORG_ADMIN', 'ADMINISTRATOR')
+    is_admin = getattr(current_user, 'is_superuser', False) or await AuthorizationService.is_org_admin(current_user, db)
 
     if mode == "everyone":
         if not is_admin:

@@ -5,9 +5,9 @@ import {
   StyleSheet,
   View,
   Text,
-  TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
 import { Colors } from './theme/colors';
 import { initApiClient } from './api/client';
 import { authStore } from './stores/authStore';
@@ -15,17 +15,13 @@ import { callStore } from './stores/callStore';
 import { ringtoneService } from './services/ringtoneService';
 import { Header } from './components/common/Header';
 import { LoginScreen } from './screens/LoginScreen';
-import { ChatsScreen } from './screens/ChatsScreen';
-import { MeetingsScreen } from './screens/MeetingsScreen';
 import { CallScreen } from './screens/CallScreen';
-import { ProfileSettingsScreen } from './screens/ProfileSettingsScreen';
 import { IncomingCallModal } from './components/call/IncomingCallModal';
 import { ServerConfigModal } from './components/modals/ServerConfigModal';
-
-type Tab = 'chats' | 'meetings' | 'settings';
+import { RootNavigator } from './navigation/RootNavigator';
+import { linking } from './navigation/linking';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('chats');
   const [authState, setAuthState] = useState(authStore.getState());
   const [callState, setCallState] = useState(callStore.getState());
   const [serverModalVisible, setServerModalVisible] = useState(false);
@@ -59,6 +55,7 @@ export default function App() {
           <Text style={styles.splashLogo}>M</Text>
         </View>
         <Text style={styles.splashText}>MICROPRO COMMUTE</Text>
+        <Text style={styles.splashSub}>Enterprise Unified Collaboration</Text>
         <ActivityIndicator color={Colors.primary} size="large" style={{ marginTop: 24 }} />
       </View>
     );
@@ -69,7 +66,7 @@ export default function App() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
-        <LoginScreen onLoginSuccess={() => setActiveTab('chats')} />
+        <LoginScreen onLoginSuccess={() => {}} />
       </SafeAreaView>
     );
   }
@@ -88,54 +85,18 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
 
-      {/* Obsidian Header with Server Indicator */}
+      {/* Obsidian Header with Server Indicator & User Presence */}
       <Header
         title="Micropro Commute"
         subtitle={authState.user?.display_name || authState.user?.username || 'Workspace'}
         onOpenServerConfig={() => setServerModalVisible(true)}
       />
 
-      {/* Main Tab Screen Content */}
+      {/* Main Workspace Navigation (tabs + pushed screens like Thread) */}
       <View style={styles.screenContent}>
-        {activeTab === 'chats' && <ChatsScreen />}
-        {activeTab === 'meetings' && <MeetingsScreen />}
-        {activeTab === 'settings' && <ProfileSettingsScreen />}
-      </View>
-
-      {/* Obsidian Bottom Dock Navigation */}
-      <View style={styles.bottomDock}>
-        <TouchableOpacity
-          style={[styles.dockItem, activeTab === 'chats' && styles.dockItemActive]}
-          onPress={() => setActiveTab('chats')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.dockEmoji}>💬</Text>
-          <Text style={[styles.dockLabel, activeTab === 'chats' && styles.dockLabelActive]}>
-            Chats
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.dockItem, activeTab === 'meetings' && styles.dockItemActive]}
-          onPress={() => setActiveTab('meetings')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.dockEmoji}>📅</Text>
-          <Text style={[styles.dockLabel, activeTab === 'meetings' && styles.dockLabelActive]}>
-            Meetings
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.dockItem, activeTab === 'settings' && styles.dockItemActive]}
-          onPress={() => setActiveTab('settings')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.dockEmoji}>⚙️</Text>
-          <Text style={[styles.dockLabel, activeTab === 'settings' && styles.dockLabelActive]}>
-            Settings
-          </Text>
-        </TouchableOpacity>
+        <NavigationContainer linking={linking}>
+          <RootNavigator />
+        </NavigationContainer>
       </View>
 
       {/* Incoming Call Modal & Multi-device Sync Alert */}
@@ -150,10 +111,13 @@ export default function App() {
         onDismissOtherDevice={() => callStore.dismissOtherDeviceAlert()}
       />
 
-      {/* Server Config Gateway Modal */}
+      {/* Server Config Modal */}
       <ServerConfigModal
         visible={serverModalVisible}
         onClose={() => setServerModalVisible(false)}
+        onServerChanged={() => {
+          authStore.checkAuth();
+        }}
       />
     </SafeAreaView>
   );
@@ -164,25 +128,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  screenContent: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
   },
   splashBrand: {
     width: 72,
     height: 72,
-    borderRadius: 24,
+    borderRadius: 22,
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: 18,
     shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
     elevation: 8,
   },
   splashLogo: {
@@ -192,42 +158,13 @@ const styles = StyleSheet.create({
   },
   splashText: {
     color: Colors.textPrimary,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
     letterSpacing: 2,
+    marginBottom: 4,
   },
-  screenContent: {
-    flex: 1,
-  },
-  bottomDock: {
-    flexDirection: 'row',
-    backgroundColor: Colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: Colors.surfaceBorder,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    justifyContent: 'space-around',
-  },
-  dockItem: {
-    alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 20,
-    borderRadius: 14,
-  },
-  dockItemActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-  },
-  dockEmoji: {
-    fontSize: 20,
-    marginBottom: 2,
-  },
-  dockLabel: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  dockLabelActive: {
-    color: Colors.primary,
-    fontWeight: '700',
+  splashSub: {
+    color: Colors.textSecondary,
+    fontSize: 12,
   },
 });

@@ -33,6 +33,7 @@ frontend/squashfs-root/
 mobile/build_output/
 mobile/ios_build/
 mobile/android/app/build/
+release_builds/
 
 # OS
 .DS_Store

@@ -1,16 +1,50 @@
 require_relative '../node_modules/react-native/scripts/react_native_pods'
 require_relative '../node_modules/@react-native-community/cli-platform-ios/native_modules'
 
-platform :ios, '14.0'
+# React Native 0.76.6 hard-requires iOS 15.1 (see
+# node_modules/react-native/scripts/cocoapods/helpers.rb -> min_ios_version_supported).
+# The previous literal '14.0' makes `pod install` abort with "The platform of the target
+# `MicroproCommute` (iOS 14.0) is not compatible with `React-Core` which has a minimum
+# requirement of iOS 15.1". Using the helper keeps this in lockstep with the RN version.
+# react-native-webrtc's podspec floor is iOS 12.0, so 15.1 satisfies it.
+platform :ios, min_ios_version_supported
 prepare_react_native_project!
 
 target 'MicroproCommute' do
   config = use_native_modules!
 
+  # react-native-webrtc 124.0.8 is picked up by the autolinking above. Its podspec pulls in
+  # `JitsiWebRTC ~> 124.0.0` (the prebuilt WebRTC.framework) — no explicit pod line needed.
+  #
+  # If `pod install` or the build fails with a non-modular-header error coming out of
+  # JitsiWebRTC, add this line and re-run `pod install`:
+  #   pod 'JitsiWebRTC', '~> 124.0.0', :modular_headers => true
+  # (Left out by default: it has never been reproduced against this project, and pinning a
+  # transitive dependency that the podspec already constrains is worse than not pinning it.)
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => true
   )
+
+  # ---------------------------------------------------------------------------
+  # iOS screen sharing (mediaDevices.getDisplayMedia) — NOT wired up yet.
+  #
+  # iOS can only capture the screen from a ReplayKit Broadcast Upload Extension, which is
+  # a second Xcode target. That target cannot be created from a text editor, so the block
+  # below is intentionally commented out: an uncommented `target` for a target that does
+  # not exist in the .xcodeproj makes `pod install` fail outright with
+  # "Unable to find a target named `MicroproCommuteBroadcast`".
+  #
+  # After creating the Broadcast Upload Extension target in Xcode (see the manual steps in
+  # the Phase 2 handoff notes), uncomment this and re-run `pod install`. Keep the target
+  # name here identical to the one in Xcode.
+  #
+  # target 'MicroproCommuteBroadcast' do
+  #   # The extension links ReplayKit only; it talks to the host app over a unix domain
+  #   # socket in the shared App Group container, so it does not need the WebRTC pods.
+  #   inherit! :search_paths
+  # end
+  # ---------------------------------------------------------------------------
 
   post_install do |installer|
     react_native_post_install(

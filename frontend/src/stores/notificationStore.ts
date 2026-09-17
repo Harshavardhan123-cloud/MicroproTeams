@@ -16,6 +16,9 @@ export interface ActivityNotificationItem {
   unread: boolean;
   type: string;
   created_at: string;
+  conversationId?: string;
+  callId?: string;
+  meetingId?: string;
 }
 
 interface NotificationState {
@@ -26,10 +29,11 @@ interface NotificationState {
 
   incrementUnread: (conversationId: string) => void;
   clearUnread: (conversationId: string) => void;
-  addToast: (toast: Omit<ToastItem, 'id' | 'timestamp'>) => void;
+  addToast: (toast: Omit<ToastItem, 'id' | 'timestamp'> & { conversationId?: string; callId?: string; meetingId?: string }) => void;
   removeToast: (id: string) => void;
   setNotifications: (items: ActivityNotificationItem[]) => void;
-  addNotification: (item: { title: string; body?: string; type?: string }) => void;
+  addNotification: (item: { title: string; body?: string; type?: string; conversationId?: string; callId?: string; meetingId?: string }) => void;
+  markNotifRead: (id: string) => void;
   markAllNotifsRead: () => void;
   clearAllNotifications: () => void;
   removeNotification: (id: string) => void;
@@ -67,7 +71,13 @@ export const useNotificationStore = create<NotificationState>((set) => ({
 
   addToast: (toast) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const newToast: ToastItem = { ...toast, id, timestamp: Date.now() };
+    const newToast: ToastItem = {
+      id,
+      title: toast.title,
+      body: toast.body,
+      type: toast.type,
+      timestamp: Date.now()
+    };
     
     // Also create dynamic activity notification item
     const notifId = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -78,7 +88,10 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       time: 'Just now',
       unread: true,
       type: toast.type,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      conversationId: toast.conversationId,
+      callId: toast.callId,
+      meetingId: toast.meetingId
     };
 
     set((state) => ({
@@ -104,9 +117,18 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       time: 'Just now',
       unread: true,
       type: item.type || 'system',
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      conversationId: item.conversationId,
+      callId: item.callId,
+      meetingId: item.meetingId
     };
     set((state) => ({ notifications: [newNotif, ...state.notifications] }));
+  },
+
+  markNotifRead: (id: string) => {
+    set((state) => ({
+      notifications: state.notifications.map((n) => (n.id === id ? { ...n, unread: false } : n))
+    }));
   },
 
   markAllNotifsRead: () => {

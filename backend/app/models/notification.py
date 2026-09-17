@@ -24,18 +24,25 @@ class Notification(Base):
 
     def to_dict(self):
         return {
+            "id": str(self.id),
             "notificationId": str(self.id),
             "userId": str(self.user_id),
+            "user_id": str(self.user_id),
             "type": self.type,
             "priority": self.priority,
             "title": self.title,
             "body": self.body,
             "icon": self.icon,
             "entityId": self.entity_id,
+            "entity_id": self.entity_id,
             "conversationId": self.conversation_id,
+            "conversation_id": self.conversation_id,
             "callId": self.call_id,
+            "call_id": self.call_id,
             "meetingId": self.meeting_id,
+            "meeting_id": self.meeting_id,
             "status": self.status,
+            "is_read": self.status == "READ",
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "read_at": self.read_at.isoformat() if self.read_at else None
         }

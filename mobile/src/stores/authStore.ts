@@ -11,6 +11,18 @@ export interface User {
   status?: string;
 }
 
+export type OtpPurpose = 'REGISTER' | 'FORGOT_PASSWORD' | 'CHANGE_PASSWORD';
+
+export interface RegisterData {
+  email: string;
+  password: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  organization_name: string;
+  otp_code?: string;
+}
+
 type Listener = () => void;
 
 class AuthStore {
@@ -126,7 +138,7 @@ class AuthStore {
     }
   }
 
-  async register(data: { email: string; password: string; username: string; display_name?: string }): Promise<boolean> {
+  async register(data: RegisterData): Promise<boolean> {
     this.isLoading = true;
     this.notify();
 
@@ -141,7 +153,7 @@ class AuthStore {
           id: resData.id || `user-${Date.now()}`,
           username: data.username,
           email: data.email,
-          display_name: data.display_name || data.username,
+          display_name: `${data.first_name} ${data.last_name}`.trim() || data.username,
         };
         this.isAuthenticated = true;
         await AsyncStorage.setItem('mc_user_info', JSON.stringify(this.user));
@@ -160,6 +172,93 @@ class AuthStore {
     }
   }
 
+  /**
+   * Sends a 6-digit email OTP code for the given purpose.
+   * Backend: POST /auth/send-otp { email, purpose } -> { message, email, purpose, dev_otp? }
+   */
+  async sendOtp(email: string, purpose: OtpPurpose): Promise<{ message?: string; dev_otp?: string }> {
+    try {
+      const response = await apiClient.post('/auth/send-otp', { email, purpose });
+      return response.data.data || response.data;
+    } catch (err: any) {
+      console.error('Send OTP error:', err?.response?.data || err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Verifies a previously sent OTP code (optional standalone check).
+   * Backend: POST /auth/verify-otp { email, otp_code, purpose } -> { message, email, purpose }
+   */
+  async verifyOtp(email: string, otpCode: string, purpose: OtpPurpose): Promise<{ message?: string }> {
+    try {
+      const response = await apiClient.post('/auth/verify-otp', {
+        email,
+        otp_code: otpCode,
+        purpose,
+      });
+      return response.data.data || response.data;
+    } catch (err: any) {
+      console.error('Verify OTP error:', err?.response?.data || err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Starts the password-reset flow by emailing an OTP to a registered account.
+   * Backend: POST /auth/forgot-password { email } -> { message, email, dev_otp? }
+   */
+  async forgotPassword(email: string): Promise<{ message?: string; dev_otp?: string }> {
+    try {
+      const response = await apiClient.post('/auth/forgot-password', { email });
+      return response.data.data || response.data;
+    } catch (err: any) {
+      console.error('Forgot password error:', err?.response?.data || err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Completes the password-reset flow using the OTP sent via forgotPassword.
+   * Backend: POST /auth/reset-password { email, otp_code, new_password } -> { message }
+   */
+  async resetPassword(email: string, otpCode: string, newPassword: string): Promise<{ message?: string }> {
+    try {
+      const response = await apiClient.post('/auth/reset-password', {
+        email,
+        otp_code: otpCode,
+        new_password: newPassword,
+      });
+      return response.data.data || response.data;
+    } catch (err: any) {
+      console.error('Reset password error:', err?.response?.data || err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Changes the current authenticated user's password. Requires an OTP sent to
+   * the user's own email with purpose CHANGE_PASSWORD (see sendOtp).
+   * Backend: POST /auth/change-password { current_password, new_password, otp_code } -> { message }
+   */
+  async changePassword(
+    currentPassword: string,
+    newPassword: string,
+    otpCode: string
+  ): Promise<{ message?: string }> {
+    try {
+      const response = await apiClient.post('/auth/change-password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+        otp_code: otpCode,
+      });
+      return response.data.data || response.data;
+    } catch (err: any) {
+      console.error('Change password error:', err?.response?.data || err.message);
+      throw err;
+    }
+  }
+
   async updateAvatar(avatarUrl: string) {
     if (!this.user) return;
     this.user = { ...this.user, avatar_url: avatarUrl };
@@ -174,6 +273,14 @@ class AuthStore {
   }
 
   async logout() {
+    try {
+      // Best-effort: revoke server-side session state. Must run before we
+      // clear the stored access token since this call is authenticated.
+      await apiClient.post('/auth/logout');
+    } catch (err) {
+      console.warn('Logout API warning:', err);
+    }
+
     wsService.disconnect();
     await clearStoredTokens();
     this.user = null;

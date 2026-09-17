@@ -16,6 +16,8 @@ export interface UpdateTeamPayload {
 export interface AddMemberPayload {
   user_id: string;
   role?: 'owner' | 'member' | 'guest';
+  history_sharing_option?: 'ALL' | 'NONE' | 'DAYS' | string;
+  history_days?: number;
 }
 
 export const teamService = {

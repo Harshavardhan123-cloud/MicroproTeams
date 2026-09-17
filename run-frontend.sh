@@ -1,30 +1,65 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# ==============================================================================
+# MicroproTeams - Machine-Independent Frontend Dev Server Launcher
+# ==============================================================================
+# Automatically detects repository path, Node.js & NPM, port availability,
+# installs node_modules if needed, and launches Vite dev server.
+# ==============================================================================
 
-PROJECT_DIR="/home/hchatte/Desktop/MS"
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
 cd "$PROJECT_DIR"
 
 echo "=========================================================="
-echo " 🎨 Starting React + Vite Frontend Dev Server "
+echo " 🎨 Starting MicroproTeams React + Vite Frontend "
 echo "=========================================================="
+echo "📁 Root Directory: $PROJECT_DIR"
 
-# Kill any existing frontend vite processes and release port 3000
-echo "🧹 Cleaning up existing frontend processes on port 3000..."
-pkill -9 -f "vite" 2>/dev/null || true
-fuser -k -9 3000/tcp 2>/dev/null || true
-lsof -t -i:3000 2>/dev/null | xargs -r kill -9 2>/dev/null || true
-# docker stop micropro_mediasoup 2>/dev/null || true
-sleep 1.5
+# Clean up helper for cross-platform port freeing
+free_port() {
+    local port=$1
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "${port}/tcp" 2>/dev/null || true
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        local pids
+        pids=$(lsof -ti ":${port}" 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+            echo "$pids" | xargs kill -9 2>/dev/null || true
+        fi
+    fi
+}
 
-# Install frontend dependencies if needed
-if [ ! -d "$PROJECT_DIR/frontend/node_modules" ]; then
-    echo "Installing frontend dependencies..."
-    cd "$PROJECT_DIR/frontend"
+echo "🧹 Checking port 3000 (Vite)..."
+free_port 3000
+sleep 0.5
+
+# 1. Check Node.js and NPM
+if ! command -v node >/dev/null 2>&1; then
+    echo "❌ Error: Node.js is not installed. Please install Node.js 18+ (https://nodejs.org)."
+    exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+    echo "❌ Error: NPM is not installed."
+    exit 1
+fi
+
+echo "✓ Node.js version: $(node -v)"
+echo "✓ NPM version: $(npm -v)"
+
+# 2. Check and Install Frontend Dependencies
+FRONTEND_DIR="$PROJECT_DIR/frontend"
+if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+    echo "📦 Installing frontend dependencies in $FRONTEND_DIR..."
+    cd "$FRONTEND_DIR"
     npm install
     cd "$PROJECT_DIR"
 fi
 
-# Start Frontend Dev Server on https://localhost:3000
-echo "🚀 Launching Vite HTTPS dev server on https://localhost:3000..."
-cd "$PROJECT_DIR/frontend"
+# 3. Launch Vite Dev Server
+echo "🚀 Launching Vite Dev Server on http://localhost:3000..."
+cd "$FRONTEND_DIR"
 exec npm run dev

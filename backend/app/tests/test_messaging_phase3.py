@@ -66,7 +66,24 @@ async def test_phase3_messaging_features(async_client: AsyncClient):
     # 5. Test Notifications API
     notif_res = await async_client.get("/api/v1/notifications", headers=headers)
     assert notif_res.status_code == 200
-    assert "unread_count" in notif_res.json()["data"]
+    notif_data = notif_res.json()["data"]
+    assert "unread_count" in notif_data
+    assert "notifications" in notif_data
+
+    # If notifications exist, verify id, is_read, status fields
+    if notif_data["notifications"]:
+        first_n = notif_data["notifications"][0]
+        assert "id" in first_n
+        assert "notificationId" in first_n
+        assert "is_read" in first_n
+        assert "status" in first_n
+        # Test delete single notification
+        del_single = await async_client.delete(f"/api/v1/notifications/{first_n['id']}", headers=headers)
+        assert del_single.status_code == 200
 
     mark_read = await async_client.post("/api/v1/notifications/read", headers=headers, json={"mark_all": True})
     assert mark_read.status_code == 200
+
+    # Test clear all notifications
+    clear_all = await async_client.delete("/api/v1/notifications", headers=headers)
+    assert clear_all.status_code == 200

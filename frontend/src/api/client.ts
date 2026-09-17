@@ -1,8 +1,11 @@
 import axios from 'axios';
 import { getToken, getRefreshToken, setTokens, clearTokens } from '../utils/token';
 
-export const DEFAULT_SERVER = 'http://192.168.1.147:8000';
-export const CLOUDFLARE_TUNNEL_URL = 'https://outdoors-introduction-commodities-gender.trycloudflare.com';
+export const DEFAULT_SERVER =
+  (import.meta as any).env?.VITE_API_BASE_URL ||
+  (typeof window !== 'undefined' && window.location.origin && !window.location.origin.startsWith('file:')
+    ? window.location.origin
+    : 'http://localhost:8000');
 
 export const getTargetHostUrl = () => {
   if (typeof window !== 'undefined') {
@@ -12,7 +15,13 @@ export const getTargetHostUrl = () => {
       return custom.trim().replace(/\/$/, '');
     }
 
-    // 2. Browser environment running on http:// or https:// (NOT file://)
+    // 2. Explicit environment variable configured at build/deploy time
+    const envApi = (import.meta as any).env?.VITE_API_BASE_URL;
+    if (envApi && typeof envApi === 'string' && envApi.trim().length > 0) {
+      return envApi.trim().replace(/\/$/, '');
+    }
+
+    // 3. Browser environment running on http:// or https:// (NOT file://)
     const origin = window.location.origin;
     const protocol = window.location.protocol;
     if (
@@ -25,7 +34,7 @@ export const getTargetHostUrl = () => {
     }
   }
 
-  // 3. Desktop / Electron fallback
+  // 4. Desktop / Electron fallback
   return DEFAULT_SERVER;
 };
 

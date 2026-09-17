@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { MessageSquare, Send, X, Minus, Maximize2, Video, Phone, GripHorizontal, Paperclip, Smile, Copy, Check, FileText, Download, Trash2 } from 'lucide-react';
+import { MessageSquare, Send, X, Minus, Maximize2, Video, Phone, GripHorizontal, Paperclip, Smile, Copy, Check, FileText, Download, Trash2, Image, Edit2 } from 'lucide-react';
 import { apiClient, getMediaUrl } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useCallStore } from '../../stores/callStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { UserAvatar } from '../common/UserAvatar';
 import { DeleteMessageModal } from '../modals/DeleteMessageModal';
 import { formatISTTime } from '../../utils/dateUtils';
 import { AttachmentCard } from './AttachmentCard';
+import { copyToClipboard } from '../../utils/clipboard';
+import { MediaAnnotationModal, MediaAnnotationResult } from './MediaAnnotationModal';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉', '🚀', '🙏', '👏'];
 
@@ -35,6 +38,12 @@ export const PopoutChatWindow: React.FC = () => {
   // Attachments & Clipboard Paste
   const [attachedFiles, setAttachedFiles] = useState<ChatAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Media Annotation Modal State
+  const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
+  const [annotationMedia, setAnnotationMedia] = useState<File | string | null>(null);
+  const [annotationInitialCaption, setAnnotationInitialCaption] = useState('');
 
   // Emoji & Reaction state
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
@@ -52,7 +61,9 @@ export const PopoutChatWindow: React.FC = () => {
   };
 
   const [deleteTargetMsgId, setDeleteTargetMsgId] = useState<string | null>(null);
-  const isAdmin = currentUser?.role === 'ADMIN' || (currentUser as any)?.is_admin || (currentUser as any)?.is_superuser;
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'ORG_ADMIN' || (currentUser as any)?.is_admin || (currentUser as any)?.is_superuser;
+  const targetDeleteMsg = messages.find((m) => m.id === deleteTargetMsgId);
+  const canDeleteForEveryone = !!(isAdmin || (targetDeleteMsg && (targetDeleteMsg.sender_id === currentUser?.id || (targetDeleteMsg as any).sender?.id === currentUser?.id)));
 
   const confirmDeleteMessage = async (mode: 'me' | 'everyone') => {
     if (!deleteTargetMsgId) return;
@@ -140,7 +151,24 @@ export const PopoutChatWindow: React.FC = () => {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      addFilesToAttachments(e.target.files);
+      const files = Array.from(e.target.files);
+      addFilesToAttachments(files);
+      if (files.length === 1 && files[0].type.startsWith('image/')) {
+        setAnnotationMedia(files[0]);
+        setAnnotationInitialCaption(content);
+        setIsAnnotationOpen(true);
+      }
+      e.target.value = '';
+    }
+  };
+
+  const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      addFilesToAttachments(files);
+      setAnnotationMedia(files[0]);
+      setAnnotationInitialCaption(content);
+      setIsAnnotationOpen(true);
       e.target.value = '';
     }
   };
@@ -151,13 +179,29 @@ export const PopoutChatWindow: React.FC = () => {
     if (!clipboardData) return;
 
     const filesToAttach: File[] = [];
+    let firstImage: File | null = null;
     if (clipboardData.items) {
       Array.from(clipboardData.items).forEach((item) => {
         if (item.kind === 'file') {
           const file = item.getAsFile();
-          if (file) filesToAttach.push(file);
+          if (file) {
+            if (file.type.startsWith('image/') && !firstImage) {
+              firstImage = file;
+            } else {
+              filesToAttach.push(file);
+            }
+          }
         }
       });
+    }
+
+    if (firstImage) {
+      e.preventDefault();
+      addFilesToAttachments([firstImage, ...filesToAttach]);
+      setAnnotationMedia(firstImage);
+      setAnnotationInitialCaption(content);
+      setIsAnnotationOpen(true);
+      return;
     }
 
     if (filesToAttach.length > 0) {
@@ -187,11 +231,20 @@ export const PopoutChatWindow: React.FC = () => {
     }
   };
 
-  const handleCopyText = async (msg: any) => {
+  const handleCopyText = async (msg: any, cleanText?: string) => {
+    const textToCopy = (cleanText !== undefined ? cleanText : msg.content) || '';
+    if (!textToCopy) return;
     try {
-      await navigator.clipboard.writeText(msg.content);
-      setCopiedMsgId(msg.id);
-      setTimeout(() => setCopiedMsgId(null), 2000);
+      const success = await copyToClipboard(textToCopy);
+      if (success) {
+        setCopiedMsgId(msg.id);
+        useNotificationStore.getState().addToast({
+          title: 'Copied',
+          body: 'Message copied to clipboard',
+          type: 'info'
+        });
+        setTimeout(() => setCopiedMsgId(null), 2000);
+      }
     } catch (err) {
       console.error('Copy text error:', err);
     }
@@ -330,6 +383,107 @@ export const PopoutChatWindow: React.FC = () => {
     }
   };
 
+  const handleSendAnnotatedMedia = async (result: MediaAnnotationResult) => {
+    if (!poppedOutChatId) return;
+    try {
+      setIsSending(true);
+      const formData = new FormData();
+      formData.append('file', result.file);
+      const uploadRes = await apiClient.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileData = uploadRes.data.data || uploadRes.data;
+      const fileName = fileData.name || fileData.original_name || fileData.file_name || result.file.name;
+      const fileUrl = fileData.file_url || fileData.url || fileData.download_url || result.previewUrl;
+
+      const attachmentPayload = {
+        file_id: fileData.id,
+        name: fileName,
+        size: fileData.size || result.file.size,
+        type: fileData.mime_type || result.file.type,
+        url: fileUrl
+      };
+
+      let finalContent = result.caption || content.trim();
+      if (result.isViewOnce) {
+        finalContent = `🔒 [View Once Media]\n${finalContent}`.trim();
+      }
+      const attText = `[Attachment: ${fileName}](${getMediaUrl(fileUrl)})`;
+      finalContent = finalContent ? `${finalContent}\n\n${attText}` : attText;
+
+      setContent('');
+      setAttachedFiles([]);
+      setIsEmojiPickerOpen(false);
+
+      const res = await apiClient.post(`/direct-conversations/${poppedOutChatId}/messages`, {
+        content: finalContent,
+        attachments: [attachmentPayload]
+      });
+
+      const newMsg = res.data.data || res.data;
+      if (!newMsg.attachments) {
+        newMsg.attachments = [attachmentPayload];
+      }
+
+      setMessages((prev) => {
+        if (prev.some((m) => String(m.id) === String(newMsg.id))) {
+          return prev.map((m) => (String(m.id) === String(newMsg.id) ? { ...m, ...newMsg } : m));
+        }
+        return [...prev, newMsg];
+      });
+      setTimeout(scrollToBottom, 50);
+    } catch (err) {
+      console.error('Send annotated popout DM error:', err);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Used when annotating an EXISTING message image — replaces in place
+  const handleUpdateAnnotatedMedia = (existingMsg: any) => async (result: MediaAnnotationResult) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', result.file);
+      const uploadRes = await apiClient.post('/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileData = uploadRes.data.data || uploadRes.data;
+      const fileName = fileData.name || fileData.original_name || fileData.file_name || result.file.name;
+      const fileUrl = fileData.file_url || fileData.url || fileData.download_url || result.previewUrl;
+
+      const attachmentPayload = {
+        file_id: fileData.id,
+        name: fileName,
+        size: fileData.size || result.file.size,
+        type: fileData.mime_type || result.file.type,
+        url: fileUrl
+      };
+
+      const baseContent = (existingMsg.content || '')
+        .replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '')
+        .replace(/📁\s*Attachment:\s*\[[^\]]+\]\([^)]+\)/gi, '')
+        .trim();
+
+      const captionPart = result.caption ? result.caption.trim() : '';
+      const attText = `[Attachment: ${fileName}](${getMediaUrl(fileUrl)})`;
+      const finalContent = captionPart
+        ? `${captionPart}\n\n${attText}`
+        : (baseContent ? `${baseContent}\n\n${attText}` : attText);
+
+      const res = await apiClient.patch(`/messages/${existingMsg.id}`, {
+        content: finalContent,
+        attachments: [attachmentPayload]
+      });
+
+      const updatedMsg = res.data.data || res.data;
+      setMessages((prev) =>
+        prev.map((m) => String(m.id) === String(existingMsg.id) ? { ...m, ...updatedMsg } : m)
+      );
+    } catch (err) {
+      console.error('Failed to update annotated media in popout DM:', err);
+    }
+  };
+
   if (!poppedOutChatId) return null;
 
   const otherMember = conversation?.members?.find((m: any) => String(m.id || m.user_id) !== String(currentUser?.id));
@@ -365,7 +519,8 @@ export const PopoutChatWindow: React.FC = () => {
   return (
     <div
       style={windowPos ? { left: `${windowPos.x}px`, top: `${windowPos.y}px`, bottom: 'auto', right: 'auto' } : undefined}
-      className="fixed bottom-4 right-4 z-[9999] w-96 h-[520px] bg-[#11131A] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 duration-200 mc-glass"
+      data-chat-viewport="true"
+      className="fixed bottom-4 right-4 z-[9999] w-96 h-[520px] bg-[#11131A] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative animate-in slide-in-from-bottom-5 duration-200 mc-glass"
     >
       {/* Draggable Header */}
       <div
@@ -462,7 +617,9 @@ export const PopoutChatWindow: React.FC = () => {
             addAttachment(match[1], match[2]);
           }
 
+          const isMsgViewOnce = rawContent.includes('[View Once Media]') || !!(msg as any).is_view_once;
           const displayContent = rawContent.replace(/\[Attachment:\s*[^\]]+\]\([^)]+\)/gi, '').trim();
+          const cleanDisplayContent = displayContent.replace(/🔒\s*\[View Once Media\]/gi, '').trim();
 
           return (
             <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group relative`}>
@@ -483,13 +640,17 @@ export const PopoutChatWindow: React.FC = () => {
                         url={att.url}
                         size={att.size}
                         type={att.type}
+                        messageId={msg.id}
+                        isViewOnce={isMsgViewOnce}
+                        caption={cleanDisplayContent}
+                        onAnnotateSend={handleUpdateAnnotatedMedia(msg)}
                       />
                     ))}
                   </div>
                 )}
 
-                {displayContent.length > 0 && (
-                  <p className="whitespace-pre-wrap break-words leading-relaxed">{displayContent}</p>
+                {cleanDisplayContent.length > 0 && (
+                  <p className="whitespace-pre-wrap break-words leading-relaxed">{cleanDisplayContent}</p>
                 )}
 
                 {/* Reactions Pills */}
@@ -516,7 +677,7 @@ export const PopoutChatWindow: React.FC = () => {
                 {/* Hover Quick Actions */}
                 <div className={`opacity-0 group-hover:opacity-100 transition-opacity absolute -top-3 ${isMe ? 'left-2' : 'right-2'} bg-[#171923] border border-white/10 rounded-lg p-0.5 flex items-center gap-1 shadow-lg z-20`}>
                   <button
-                    onClick={() => handleCopyText(msg)}
+                    onClick={() => handleCopyText(msg, displayContent)}
                     className="p-1 text-mc-muted hover:text-white"
                     title="Copy Text"
                   >
@@ -566,19 +727,41 @@ export const PopoutChatWindow: React.FC = () => {
 
       {/* Hidden File Input */}
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} multiple className="hidden" />
+      {/* Hidden Image Input for Annotation */}
+      <input type="file" ref={imageInputRef} onChange={handleImageFileSelect} accept="image/*" className="hidden" />
 
       {/* Footer / Input */}
       <div className="p-2 border-t border-white/5 bg-[#171923] relative shrink-0">
         {attachedFiles.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-1.5 p-1.5 bg-[#11131A] rounded-lg">
-            {attachedFiles.map((att) => (
-              <div key={att.id} className="flex items-center gap-1 bg-[#171923] px-2 py-1 rounded text-[10px] text-white">
-                <span className="truncate max-w-[100px]">{att.name}</span>
-                <button type="button" onClick={() => handleRemoveAttachment(att.id)} className="text-rose-400 hover:text-rose-300">
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
+            {attachedFiles.map((att) => {
+              const isImg = att.type.startsWith('image/');
+              return (
+                <div key={att.id} className="flex items-center gap-1.5 bg-[#171923] border border-white/5 px-2 py-1 rounded text-[10px] text-white">
+                  {isImg && (
+                    <img src={att.url} alt={att.name} className="w-5 h-5 object-cover rounded" />
+                  )}
+                  <span className="truncate max-w-[90px]">{att.name}</span>
+                  {isImg && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnnotationMedia(att.file || att.url);
+                        setAnnotationInitialCaption(content);
+                        setIsAnnotationOpen(true);
+                      }}
+                      className="text-amber-400 hover:text-amber-300 ml-0.5"
+                      title="Markup / Annotate"
+                    >
+                      <Edit2 className="w-2.5 h-2.5" />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => handleRemoveAttachment(att.id)} className="text-rose-400 hover:text-rose-300 ml-0.5">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -601,6 +784,14 @@ export const PopoutChatWindow: React.FC = () => {
         )}
 
         <form onSubmit={handleSendMessage} className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            className="p-1 text-mc-muted hover:text-emerald-400 rounded transition-colors"
+            title="Annotate & Send Photo (Draw, Text, Shapes, Blur, Stickers)"
+          >
+            <Image className="w-3.5 h-3.5 text-emerald-400" />
+          </button>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -635,11 +826,23 @@ export const PopoutChatWindow: React.FC = () => {
         </form>
       </div>
 
+      <MediaAnnotationModal
+        isOpen={isAnnotationOpen}
+        imageSource={annotationMedia}
+        initialCaption={annotationInitialCaption}
+        onClose={() => {
+          setIsAnnotationOpen(false);
+          setAnnotationMedia(null);
+        }}
+        onSend={handleSendAnnotatedMedia}
+      />
+
       <DeleteMessageModal
         isOpen={!!deleteTargetMsgId}
         onClose={() => setDeleteTargetMsgId(null)}
         onConfirm={confirmDeleteMessage}
         isAdmin={isAdmin}
+        canDeleteForEveryone={canDeleteForEveryone}
         itemType="message"
       />
     </div>

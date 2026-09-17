@@ -48,6 +48,9 @@ interface UIState {
 
   poppedOutChatId: string | null;
   setPoppedOutChatId: (id: string | null) => void;
+
+  selectedConversationId: string | null;
+  setSelectedConversationId: (id: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -105,4 +108,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   poppedOutChatId: null,
   setPoppedOutChatId: (id) => set({ poppedOutChatId: id }),
+
+  selectedConversationId: null,
+  setSelectedConversationId: (id) => set({ selectedConversationId: id }),
 }));

@@ -39,8 +39,10 @@ const applyThemeToDOM = (mode: ThemeMode) => {
 
   if (isLight) {
     document.documentElement.classList.add('light-mode');
+    document.documentElement.classList.remove('dark');
   } else {
     document.documentElement.classList.remove('light-mode');
+    document.documentElement.classList.add('dark');
   }
 };
 

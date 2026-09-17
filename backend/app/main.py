@@ -34,19 +34,26 @@ from app.core.redis import get_redis, close_redis
 from app.api.v1 import (
     auth, users, teams, channels, messages, websocket, files,
     direct_messages, search, audit_logs, meetings, calendar, notifications,
-    calls, meetings_signaling, recordings, meeting_ai, admin
+    calls, meetings_signaling, recordings, meeting_ai, admin, organization_units
 )
 from app.services.seed import seed_data
 from app.services.file_service import UPLOAD_DIR
+
+import uuid
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from app.core.response import error_response
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     
-    try:
-        await seed_data()
-    except Exception as e:
-        print(f"Seed note: {e}")
+    # In production, do not automatically seed demo accounts unless explicitly configured
+    if settings.ENVIRONMENT == "development" or settings.SEED_DEMO_DATA:
+        try:
+            await seed_data()
+        except Exception as e:
+            logging.getLogger("uvicorn.error").warning(f"Seed note: {e}")
         
     yield
     await close_redis()
@@ -60,13 +67,39 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# The app authenticates via a Bearer token (not cookies), so credentialed CORS
-# isn't needed; combining a wildcard origin with allow_credentials=True would let
-# any site make authenticated cross-origin requests on a logged-in user's behalf.
-# "null" covers Electron's packaged app, which loads its UI from a file:// page.
+@app.exception_handler(Exception)
+async def global_unhandled_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "unknown")
+    logging.getLogger("uvicorn.error").error(
+        f"Unhandled Exception [Request-ID: {req_id}] on {request.method} {request.url.path}: {exc}",
+        exc_info=True
+    )
+    return error_response(
+        "INTERNAL_SERVER_ERROR",
+        "An unexpected error occurred. Please contact support with the request ID.",
+        status_code=500
+    )
+
+class SecurityAndTracingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = req_id
+
+        response = await call_next(request)
+
+        response.headers["X-Request-ID"] = req_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+app.add_middleware(SecurityAndTracingMiddleware)
+
+cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins if cors_origins else ["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -136,11 +169,17 @@ async def serve_upload_file(
         traceback.print_exc()
 
     # 2. Disk fallback if not in DB
-    target_path = os.path.join(UPLOAD_DIR, file_name)
+    clean_name = os.path.basename(file_name)
+    if ".." in file_name or "/" in file_name or "\\" in file_name:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    canonical_upload_dir = os.path.realpath(UPLOAD_DIR)
+    target_path = os.path.realpath(os.path.join(UPLOAD_DIR, clean_name))
+    if not target_path.startswith(canonical_upload_dir):
+        raise HTTPException(status_code=400, detail="Invalid file path")
 
     # Extension fallback check if direct path doesn't exist (e.g., UUID without extension or legacy original filename)
     if not os.path.exists(target_path):
-        base_name = os.path.basename(file_name)
+        base_name = clean_name
         ext_target = os.path.splitext(base_name)[1].lower()
         if os.path.exists(UPLOAD_DIR):
             for candidate in os.listdir(UPLOAD_DIR):
@@ -201,12 +240,51 @@ app.include_router(meetings_signaling.router, prefix="/api/v1")
 app.include_router(recordings.router, prefix="/api/v1")
 app.include_router(meeting_ai.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(organization_units.router, prefix="/api/v1")
+app.include_router(organization_units.alias_router, prefix="/api/v1")
 
+
+from sqlalchemy import text
+from app.core.database import AsyncSessionLocal
+from fastapi import Query
+from fastapi.responses import JSONResponse
 
 @app.get("/api/v1/health")
-async def health_check():
-    return {
+@app.get("/api/v1/health/liveness")
+async def health_check(deep: bool = Query(False)):
+    status_info = {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
         "environment": settings.ENVIRONMENT
     }
+    if deep:
+        db_ok = False
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("SELECT 1"))
+                db_ok = True
+        except Exception as e:
+            logging.getLogger("uvicorn.error").warning(f"Health check DB probe error: {e}")
+
+        redis_ok = False
+        try:
+            r = await get_redis()
+            if hasattr(r, "ping"):
+                await r.ping()
+            redis_ok = True
+        except Exception as e:
+            logging.getLogger("uvicorn.error").warning(f"Health check Redis probe error: {e}")
+
+        status_info["checks"] = {
+            "database": "connected" if db_ok else "unreachable",
+            "redis": "connected" if redis_ok else "unreachable"
+        }
+        if not db_ok:
+            status_info["status"] = "degraded" if settings.ENVIRONMENT == "development" else "unhealthy"
+            return JSONResponse(status_code=503 if settings.ENVIRONMENT == "production" else 200, content=status_info)
+
+    return status_info
+
+@app.get("/api/v1/health/readiness")
+async def readiness_check():
+    return await health_check(deep=True)

@@ -99,8 +99,8 @@ export const RegisterPage: React.FC = () => {
         <div className="p-8 md:p-12 bg-gradient-to-br from-[#171923] to-[#0B0D12] border-b md:border-b-0 md:border-r border-white/10 flex flex-col justify-between relative overflow-hidden dark-panel">
           <div className="space-y-6 relative z-10">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center">
-                <MicroproLogo className="w-9 h-9" />
+              <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/15 flex items-center justify-center shadow-lg bg-[#f7f7f7] shrink-0">
+                <MicroproLogo className="w-full h-full object-cover" />
               </div>
               <span className="font-bold text-lg tracking-tight text-white font-display">
                 Micropro<span className="text-indigo-400">_Commute</span>

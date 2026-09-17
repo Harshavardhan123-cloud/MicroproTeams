@@ -39,7 +39,6 @@ import { useGlobalShortcuts } from '../hooks/useGlobalShortcuts';
 export const Dashboard: React.FC = () => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
   const [contactsFilter, setContactsFilter] = useState<'all' | 'favorites' | 'online' | 'blocked'>('all');
   const [contactsSearch, setContactsSearch] = useState('');
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
@@ -49,7 +48,9 @@ export const Dashboard: React.FC = () => {
     selectedChannel, setSelectedChannel, 
     activeTab, setActiveTab,
     activeMeetingId, setActiveMeetingId,
-    isMeetingPoppedOut, setIsMeetingPoppedOut
+    isMeetingPoppedOut, setIsMeetingPoppedOut,
+    selectedConversationId: selectedConvId,
+    setSelectedConversationId: setSelectedConvId
   } = useUIStore();
   const { receiveCall, acceptCall, declineCall, endCall, callState, conversationId } = useCallStore();
   const { incrementUnread, clearUnread, addToast } = useNotificationStore();
@@ -214,12 +215,16 @@ export const Dashboard: React.FC = () => {
         body: event.body || `You were invited to a meeting.`
       });
     } else if (event.type === 'notification.new' && event.notification) {
+      const n = event.notification;
       notificationOrchestrator.notify({
-        notificationId: event.notification.id || `sys-${Date.now()}`,
-        type: (event.notification.type as any) || 'SYSTEM',
-        priority: (event.notification.priority as any) || 'NORMAL',
-        title: event.notification.title || 'New Notification',
-        body: event.notification.body || ''
+        notificationId: n.id || n.notificationId || `sys-${Date.now()}`,
+        type: (n.type as any) || 'SYSTEM',
+        priority: (n.priority as any) || 'NORMAL',
+        title: n.title || 'New Notification',
+        body: n.body || '',
+        conversationId: n.conversation_id || n.conversationId,
+        callId: n.call_id || n.callId,
+        meetingId: n.meeting_id || n.meetingId
       });
     } else if (event.type === 'meeting.reminder_5m') {
       notificationOrchestrator.notify({

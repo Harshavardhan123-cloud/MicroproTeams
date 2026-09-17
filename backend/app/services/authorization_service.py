@@ -20,8 +20,10 @@ class AuthorizationService:
 
     @staticmethod
     async def is_org_admin(user: User, db: AsyncSession) -> bool:
+        if getattr(user, 'is_superuser', False) or getattr(user, 'is_admin', False):
+            return True
         role = await AuthorizationService.get_user_role_name(user, db)
-        return role in ["SUPER_ADMIN", "ORG_ADMIN"]
+        return role in ["SUPER_ADMIN", "ORG_ADMIN", "ADMIN", "ADMINISTRATOR"]
 
     @staticmethod
     async def can_access_team(user: User, team_id: str, db: AsyncSession) -> bool:
